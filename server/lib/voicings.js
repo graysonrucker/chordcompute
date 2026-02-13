@@ -1,5 +1,9 @@
 // server/lib/voicings.js
 
+/*curl -X POST http://localhost:3000/api/voicings \
+  -H "Content-Type: application/json" \
+  -d '{"notes":[35,39,47]}' | jq*/
+
 // ---------- helpers ----------
 function uniqSorted(nums) {
   return [...new Set(nums)].sort((a, b) => a - b);
@@ -58,11 +62,11 @@ function sanitizeNotes(inputNotes) {
 }
 
 function normalizeOptions(input) {
-  const rangeLow = Number.isFinite(input.rangeLow) ? input.rangeLow : 48;
-  const rangeHigh = Number.isFinite(input.rangeHigh) ? input.rangeHigh : 72;
+  const rangeLow = Number.isFinite(input.rangeLow) ? input.rangeLow : 0;
+  const rangeHigh = Number.isFinite(input.rangeHigh) ? input.rangeHigh : 127;
   const minNotes = Number.isFinite(input.minNotes) ? input.minNotes : 3;
   const maxNotes = Number.isFinite(input.maxNotes) ? input.maxNotes : 5;
-  const maxSpan = Number.isFinite(input.maxSpan) ? input.maxSpan : 16;
+  const maxSpan = Number.isFinite(input.maxSpan) ? input.maxSpan : 127;
   const limit = Number.isFinite(input.limit) ? Math.min(input.limit, 1000) : 200;
 
   return { rangeLow, rangeHigh, minNotes, maxNotes, maxSpan, limit };
