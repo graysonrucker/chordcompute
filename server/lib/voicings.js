@@ -1,12 +1,4 @@
-const express = require('express');
-const cors = require('cors');
-const { db, initialize } = require('./database');
-
-initialize();
-
-const app = express();
-app.use(cors());
-app.use(express.json()); // <-- IMPORTANT: so POST bodies work
+// server/lib/voicings.js
 
 // ---------- helpers ----------
 function uniqSorted(nums) {
@@ -14,7 +6,6 @@ function uniqSorted(nums) {
 }
 
 function pcsFromNotes(notes) {
-  // safe mod (handles negatives if they ever happen)
   const pcs = notes.map(n => ((n % 12) + 12) % 12);
   return uniqSorted(pcs);
 }
@@ -45,7 +36,6 @@ function combinations(arr, k) {
 }
 
 function scoreVoicing(notes) {
-  // smaller span is better; fewer doublings is better
   const span = notes[notes.length - 1] - notes[0];
 
   const pcs = notes.map(n => ((n % 12) + 12) % 12);
@@ -55,59 +45,19 @@ function scoreVoicing(notes) {
   let doublingPenalty = 0;
   for (const c of counts.values()) doublingPenalty += Math.max(0, c - 1);
 
-  // weighted score: span dominates, doublings secondary
   return span * 10 + doublingPenalty * 3;
 }
 // -----------------------------
 
-app.get('/api/notes', (req, res) => {
-  db.all("SELECT * FROM notes", (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
-});
-
-app.get('/api/chord-types', (req, res) => {
-  db.all("SELECT * FROM chord_types", (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
-});
-
-/**
- * POST /api/voicings
- * Body:
- * {
- *   "notes": [35,39,47],
- *   "rangeLow": 48,
- *   "rangeHigh": 72,
- *   "minNotes": 3,
- *   "maxNotes": 5,
- *   "maxSpan": 16,
- *   "limit": 200
- * }
- */
-app.post('/api/voicings', (req, res) => {
-  const input = req.body;
-
-  if (!input || !Array.isArray(input.notes) || input.notes.length === 0) {
-    return res.status(400).json({ error: "Body must include { notes: number[] }" });
-  }
-
-  // sanitize notes
-  const notes = uniqSorted(
-    input.notes
+function sanitizeNotes(inputNotes) {
+  return uniqSorted(
+    inputNotes
       .map(Number)
       .filter(n => Number.isFinite(n))
   );
+}
 
-  if (notes.length === 0) {
-    return res.status(400).json({ error: "No valid numeric notes provided." });
-  }
-
-  const pcsNeed = pcsFromNotes(notes);
-
-  // defaults (safe MVP)
+function normalizeOptions(input) {
   const rangeLow = Number.isFinite(input.rangeLow) ? input.rangeLow : 48;
   const rangeHigh = Number.isFinite(input.rangeHigh) ? input.rangeHigh : 72;
   const minNotes = Number.isFinite(input.minNotes) ? input.minNotes : 3;
@@ -115,25 +65,39 @@ app.post('/api/voicings', (req, res) => {
   const maxSpan = Number.isFinite(input.maxSpan) ? input.maxSpan : 16;
   const limit = Number.isFinite(input.limit) ? Math.min(input.limit, 1000) : 200;
 
-  if (rangeHigh < rangeLow) {
-    return res.status(400).json({ error: "rangeHigh must be >= rangeLow" });
-  }
-  if (minNotes < 1 || maxNotes < minNotes) {
-    return res.status(400).json({ error: "Invalid minNotes/maxNotes" });
+  return { rangeLow, rangeHigh, minNotes, maxNotes, maxSpan, limit };
+}
+
+function generateVoicings(input) {
+  // input validation specific to generation
+  if (!input || !Array.isArray(input.notes) || input.notes.length === 0) {
+    return { error: "Body must include { notes: number[] }" };
   }
 
-  // build candidate notes in the output range belonging to chord pitch classes
+  const notes = sanitizeNotes(input.notes);
+  if (notes.length === 0) {
+    return { error: "No valid numeric notes provided." };
+  }
+
+  const pcsNeed = pcsFromNotes(notes);
+  const { rangeLow, rangeHigh, minNotes, maxNotes, maxSpan, limit } = normalizeOptions(input);
+
+  if (rangeHigh < rangeLow) {
+    return { error: "rangeHigh must be >= rangeLow" };
+  }
+  if (minNotes < 1 || maxNotes < minNotes) {
+    return { error: "Invalid minNotes/maxNotes" };
+  }
+
+  // build candidate notes
   const candidates = [];
   for (let n = rangeLow; n <= rangeHigh; n++) {
     const pc = ((n % 12) + 12) % 12;
     if (pcsNeed.includes(pc)) candidates.push(n);
   }
 
-  // generate, filter, rank
   const results = [];
-
-  // HARD safety valve: stop if combos get ridiculous
-  const COMBO_CAP = 300000; // adjust later
+  const COMBO_CAP = 300000;
   let generated = 0;
 
   for (let k = minNotes; k <= maxNotes; k++) {
@@ -156,14 +120,14 @@ app.post('/api/voicings', (req, res) => {
 
   results.sort((a, b) => a.score - b.score);
 
-  res.json({
+  return {
     input: { notes, pcsNeed, rangeLow, rangeHigh, minNotes, maxNotes, maxSpan, limit },
     totalFound: results.length,
     voicings: results.slice(0, limit),
-    truncatedBecauseComboCap: generated > COMBO_CAP
-  });
-});
+    truncatedBecauseComboCap: generated > COMBO_CAP,
+  };
+}
 
-app.listen(3000, () => {
-  console.log("Server running on http://localhost:3000");
-});
+module.exports = {
+  generateVoicings,
+};
