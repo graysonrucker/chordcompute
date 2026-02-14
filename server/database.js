@@ -4,8 +4,8 @@ const fs = require('fs');
 const db = new sqlite3.Database('chords.db');
 
 function initialize() {
-    const schema = fs.readFileSync('./server/schema.sql', 'utf-8');
-    const seed = fs.readFileSync('./server/seed.sql', 'utf-8');
+    const schema = fs.readFileSync('./schema.sql', 'utf-8');
+    const seed = fs.readFileSync('./seed.sql', 'utf-8');
 
     db.exec(schema);
     db.exec(seed);
