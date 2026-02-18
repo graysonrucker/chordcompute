@@ -62,11 +62,11 @@ function sanitizeNotes(inputNotes) {
 }
 
 function normalizeOptions(input) {
-  const rangeLow = Number.isFinite(input.rangeLow) ? input.rangeLow : 60;
-  const rangeHigh = Number.isFinite(input.rangeHigh) ? input.rangeHigh : 72;
+  const rangeLow = Number.isFinite(input.rangeLow) ? input.rangeLow : 21;
+  const rangeHigh = Number.isFinite(input.rangeHigh) ? input.rangeHigh : 108;
   const minNotes = Number.isFinite(input.minNotes) ? input.minNotes : 3;
-  const maxNotes = Number.isFinite(input.maxNotes) ? input.maxNotes : 5;
-  const maxSpan = Number.isFinite(input.maxSpan) ? input.maxSpan : 16;
+  const maxNotes = Number.isFinite(input.maxNotes) ? input.maxNotes : 12;
+  const maxSpan = Number.isFinite(input.maxSpan) ? input.maxSpan : 88;
   const limit = Number.isFinite(input.limit) ? Math.min(input.limit, 1000) : 200;
 
   return { rangeLow, rangeHigh, minNotes, maxNotes, maxSpan, limit };
