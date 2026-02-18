@@ -1,21 +1,12 @@
-// src/components/Piano.jsx
 import { useMemo } from "react";
-
-const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-
-export const WHITE_W = 64;
-const BLACK_W = 40;
-const WHITE_H = 220;
-const BLACK_H = 140;
-
-function pcName(midi) {
-  const pc = ((midi % 12) + 12) % 12;
-  return NOTE_NAMES[pc];
-}
-
-function isWhitePc(pc) {
-  return pc === 0 || pc === 2 || pc === 4 || pc === 5 || pc === 7 || pc === 9 || pc === 11;
-}
+import {
+  WHITE_W,
+  BLACK_W,
+  WHITE_H,
+  BLACK_H,
+  pcName,
+  isWhitePc,
+} from "../lib/pianoLayout";
 
 export default function Piano({
   activeNotes,

@@ -1,6 +1,7 @@
 // src/App.jsx
 import { useState, useMemo } from "react";
-import Piano, { WHITE_W } from "./components/Piano";
+import Piano from "./components/Piano";
+import { WHITE_W } from "./lib/pianoLayout";
 import FitToWidth from "./components/FitToWidth";
 import KeyboardControls from "./components/KeyboardControls";
 import { useKeyboardRange } from "./hooks/useKeyboardRange";
