@@ -1,35 +1,20 @@
+// src/components/Piano.jsx
 import { useMemo } from "react";
-import {
-  WHITE_W,
-  BLACK_W,
-  WHITE_H,
-  BLACK_H,
-  pcName,
-  isWhitePc,
-} from "../lib/pianoLayout";
+import { WHITE_W, BLACK_W, WHITE_H, BLACK_H, pcName, isWhitePc } from "../lib/pianoLayout";
+import WhiteKey from "./piano/WhiteKey";
+import BlackKey from "./piano/BlackKey";
 
 export default function Piano({
-  activeNotes,
-  setActiveNotes,
+  isActive,
+  toggleMidi,
   startMidi = 60, // C4
   endMidi = 71,   // B4
 }) {
-  function isActive(midi) {
-    return activeNotes.includes(midi);
-  }
-
-  function toggleMidi(midi) {
-    setActiveNotes((prev) =>
-      prev.includes(midi) ? prev.filter((n) => n !== midi) : [...prev, midi]
-    );
-  }
-
   const { whites, blacks } = useMemo(() => {
     const whitesLocal = [];
     const blacksLocal = [];
     const whitePosByMidi = new Map();
 
-    // collect whites
     for (let m = startMidi; m <= endMidi; m++) {
       const pc = ((m % 12) + 12) % 12;
       if (isWhitePc(pc)) {
@@ -39,7 +24,6 @@ export default function Piano({
       }
     }
 
-    // collect blacks
     for (let m = startMidi; m <= endMidi; m++) {
       const pc = ((m % 12) + 12) % 12;
       if (!isWhitePc(pc)) {
@@ -66,54 +50,33 @@ export default function Piano({
     >
       {/* WHITE KEYS */}
       <div className="flex h-full">
-        {whites.map((k) => {
-          const active = isActive(k.midi);
-          return (
-            <button
-              key={k.midi}
-              onClick={() => toggleMidi(k.midi)}
-              className={[
-                "relative border border-slate-300 text-slate-900",
-                "flex items-end justify-center",
-                "rounded-b-lg",
-                "transition-colors",
-                active ? "bg-cyan-300 hover:bg-cyan-200" : "bg-white hover:bg-slate-100",
-              ].join(" ")}
-              style={{ width: `${WHITE_W}px`, height: `${WHITE_H}px` }}
-              title={`${k.label} (MIDI ${k.midi})`}
-            >
-              <span className="mb-2 text-sm">{k.label}</span>
-            </button>
-          );
-        })}
+        {whites.map((k) => (
+          <WhiteKey
+            key={k.midi}
+            midi={k.midi}
+            label={k.label}
+            active={isActive(k.midi)}
+            onClick={() => toggleMidi(k.midi)}
+            widthPx={WHITE_W}
+            heightPx={WHITE_H}
+          />
+        ))}
       </div>
 
       {/* BLACK KEYS */}
       <div className="pointer-events-none absolute left-0 top-0">
-        {blacks.map((bk) => {
-          const active = isActive(bk.midi);
-          return (
-            <button
-              key={bk.midi}
-              onClick={() => toggleMidi(bk.midi)}
-              className={[
-                "pointer-events-auto absolute",
-                "border border-black/60 text-slate-100",
-                "rounded-b-lg shadow",
-                "transition-colors",
-                active ? "bg-cyan-300 hover:bg-cyan-200" : "bg-slate-900 hover:bg-slate-800",
-              ].join(" ")}
-              style={{
-                left: `${bk.leftPx}px`,
-                width: `${BLACK_W}px`,
-                height: `${BLACK_H}px`,
-              }}
-              title={`${bk.label} (MIDI ${bk.midi})`}
-            >
-              <span className="sr-only">{bk.label}</span>
-            </button>
-          );
-        })}
+        {blacks.map((bk) => (
+          <BlackKey
+            key={bk.midi}
+            midi={bk.midi}
+            label={bk.label}
+            active={isActive(bk.midi)}
+            onClick={() => toggleMidi(bk.midi)}
+            leftPx={bk.leftPx}
+            widthPx={BLACK_W}
+            heightPx={BLACK_H}
+          />
+        ))}
       </div>
     </div>
   );

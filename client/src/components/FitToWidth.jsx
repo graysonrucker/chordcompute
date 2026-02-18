@@ -1,25 +1,17 @@
 // src/components/FitToWidth.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 
-export default function FitToWidth({
-  contentWidth,
-  children,
-  className = "",
-  durationMs = 220,
-}) {
+export default function FitToWidth({ contentWidth, children, durationMs = 220 }) {
   const outerRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(0);
 
   useEffect(() => {
     if (!outerRef.current) return;
-
-    const el = outerRef.current;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect?.width ?? 0;
       setContainerWidth(w);
     });
-
-    ro.observe(el);
+    ro.observe(outerRef.current);
     return () => ro.disconnect();
   }, []);
 
@@ -29,11 +21,7 @@ export default function FitToWidth({
   }, [containerWidth, contentWidth]);
 
   return (
-    <div
-      ref={outerRef}
-      className={`w-full overflow-hidden ${className}`}
-      style={{ willChange: "transform" }}
-    >
+    <div ref={outerRef} className="w-full overflow-hidden">
       <div
         className="flex justify-center"
         style={{
@@ -42,7 +30,6 @@ export default function FitToWidth({
           transition: `transform ${durationMs}ms ease`,
         }}
       >
-        {/* This ensures the child has a real intrinsic width to scale from */}
         <div className="inline-block">{children}</div>
       </div>
     </div>

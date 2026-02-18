@@ -1,14 +1,15 @@
 // src/App.jsx
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import Piano from "./components/Piano";
-import { WHITE_W } from "./lib/pianoLayout";
 import FitToWidth from "./components/FitToWidth";
-import KeyboardControls from "./components/KeyboardControls";
+import KeyboardSideControls from "./components/KeyboardSideControls";
 import { useKeyboardRange } from "./hooks/useKeyboardRange";
+import { useActiveNotes } from "./hooks/useActiveNotes";
+import { WHITE_W } from "./lib/pianoLayout";
 
 export default function App() {
-  const [activeNotes, setActiveNotes] = useState([]); // MIDI numbers
   const range = useKeyboardRange();
+  const notes = useActiveNotes([]);
 
   // 7 white keys per octave
   const naturalWidth = useMemo(() => {
@@ -24,27 +25,38 @@ export default function App() {
           Base octave: C4–B4. Expand left/right by octaves (clamped to A0–C8).
         </p>
 
-        <div className="mt-6 flex items-start justify-center gap-4 w-full">
-          <KeyboardControls
-            leftOctaves={range.leftOctaves}
-            rightOctaves={range.rightOctaves}
-            canAddLeft={range.canAddLeft}
-            canAddRight={range.canAddRight}
-            addLeft={range.addLeft}
-            removeLeft={range.removeLeft}
-            addRight={range.addRight}
-            removeRight={range.removeRight}
-          />
+        {/* 3-column grid with equal fixed side columns ensures true centering */}
+        <div className="mt-6 w-full grid grid-cols-[3.5rem_minmax(0,1fr)_3.5rem] items-start gap-4">
+          {/* LEFT */}
+          <div className="flex justify-center">
+            <KeyboardSideControls
+              canAdd={range.canAddLeft}
+              canRemove={range.leftOctaves > 0}
+              onAdd={range.addLeft}
+              onRemove={range.removeLeft}
+            />
+          </div>
 
-          <div className="flex-1 min-w-0">
+          {/* CENTER */}
+          <div className="min-w-0">
             <FitToWidth contentWidth={naturalWidth}>
               <Piano
-                activeNotes={activeNotes}
-                setActiveNotes={setActiveNotes}
+                isActive={notes.isActive}
+                toggleMidi={notes.toggleMidi}
                 startMidi={range.startMidi}
                 endMidi={range.endMidi}
               />
             </FitToWidth>
+          </div>
+
+          {/* RIGHT */}
+          <div className="flex justify-center">
+            <KeyboardSideControls
+              canAdd={range.canAddRight}
+              canRemove={range.rightOctaves > 0}
+              onAdd={range.addRight}
+              onRemove={range.removeRight}
+            />
           </div>
         </div>
 
@@ -58,7 +70,7 @@ export default function App() {
         <div className="mt-2 text-sm text-slate-300">
           Active notes (MIDI):{" "}
           <span className="text-slate-100">
-            {activeNotes.length ? activeNotes.join(", ") : "none"}
+            {notes.activeNotes.length ? notes.activeNotes.join(", ") : "none"}
           </span>
         </div>
       </div>
