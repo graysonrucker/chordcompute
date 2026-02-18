@@ -62,7 +62,7 @@ function sanitizeNotes(inputNotes) {
 }
 
 function normalizeOptions(input) {
-  const rangeLow = Number.isFinite(input.rangeLow) ? input.rangeLow : 48;
+  const rangeLow = Number.isFinite(input.rangeLow) ? input.rangeLow : 60;
   const rangeHigh = Number.isFinite(input.rangeHigh) ? input.rangeHigh : 72;
   const minNotes = Number.isFinite(input.minNotes) ? input.minNotes : 3;
   const maxNotes = Number.isFinite(input.maxNotes) ? input.maxNotes : 5;
