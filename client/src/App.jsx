@@ -1,18 +1,19 @@
-import { useState } from "react";
-import Piano from "./components/Piano";
+// src/App.jsx
+import { useState, useMemo } from "react";
+import Piano, { WHITE_W } from "./components/Piano";
 import FitToWidth from "./components/FitToWidth";
+import KeyboardControls from "./components/KeyboardControls";
 import { useKeyboardRange } from "./hooks/useKeyboardRange";
-
-const WHITE_W = 64;
 
 export default function App() {
   const [activeNotes, setActiveNotes] = useState([]); // MIDI numbers
   const range = useKeyboardRange();
 
-  // Approximate natural width: 7 white keys per octave * WHITE_W.
-  // (This is slightly off only at the extreme A0–B0 and C8 edges, but works well.)
-  const octaveCount = 1 + range.leftOctaves + range.rightOctaves;
-  const naturalWidth = octaveCount * 7 * WHITE_W;
+  // 7 white keys per octave
+  const naturalWidth = useMemo(() => {
+    const octaveCount = 1 + range.leftOctaves + range.rightOctaves;
+    return octaveCount * 7 * WHITE_W;
+  }, [range.leftOctaves, range.rightOctaves]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -22,31 +23,18 @@ export default function App() {
           Base octave: C4–B4. Expand left/right by octaves (clamped to A0–C8).
         </p>
 
-        {/* Controls flanking the piano + piano that always fits */}
         <div className="mt-6 flex items-start justify-center gap-4 w-full">
-          {/* LEFT CONTROLS */}
-          <div className="flex flex-col items-center shrink-0">
-            <button
-              onClick={range.addLeft}
-              disabled={!range.canAddLeft}
-              className="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Add an octave on the left"
-            >
-              +
-            </button>
+          <KeyboardControls
+            leftOctaves={range.leftOctaves}
+            rightOctaves={range.rightOctaves}
+            canAddLeft={range.canAddLeft}
+            canAddRight={range.canAddRight}
+            addLeft={range.addLeft}
+            removeLeft={range.removeLeft}
+            addRight={range.addRight}
+            removeRight={range.removeRight}
+          />
 
-            {range.leftOctaves > 0 && (
-              <button
-                onClick={range.removeLeft}
-                className="mt-2 px-3 py-1 rounded bg-slate-800 hover:bg-slate-700"
-                title="Remove an octave from the left"
-              >
-                −
-              </button>
-            )}
-          </div>
-
-          {/* PIANO (min-w-0 is critical so the center column can shrink) */}
           <div className="flex-1 min-w-0">
             <FitToWidth contentWidth={naturalWidth}>
               <Piano
@@ -56,28 +44,6 @@ export default function App() {
                 endMidi={range.endMidi}
               />
             </FitToWidth>
-          </div>
-
-          {/* RIGHT CONTROLS */}
-          <div className="flex flex-col items-center shrink-0">
-            <button
-              onClick={range.addRight}
-              disabled={!range.canAddRight}
-              className="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Add an octave on the right"
-            >
-              +
-            </button>
-
-            {range.rightOctaves > 0 && (
-              <button
-                onClick={range.removeRight}
-                className="mt-2 px-3 py-1 rounded bg-slate-800 hover:bg-slate-700"
-                title="Remove an octave from the right"
-              >
-                −
-              </button>
-            )}
           </div>
         </div>
 

@@ -1,4 +1,12 @@
+// src/components/Piano.jsx
+import { useMemo } from "react";
+
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+export const WHITE_W = 64;
+const BLACK_W = 40;
+const WHITE_H = 220;
+const BLACK_H = 140;
 
 function pcName(midi) {
   const pc = ((midi % 12) + 12) % 12;
@@ -12,14 +20,9 @@ function isWhitePc(pc) {
 export default function Piano({
   activeNotes,
   setActiveNotes,
-  startMidi = 60, // default C4
-  endMidi = 71,   // default B4
+  startMidi = 60, // C4
+  endMidi = 71,   // B4
 }) {
-  const WHITE_W = 64;
-  const BLACK_W = 40;
-  const WHITE_H = 220;
-  const BLACK_H = 140;
-
   function isActive(midi) {
     return activeNotes.includes(midi);
   }
@@ -30,42 +33,37 @@ export default function Piano({
     );
   }
 
-  // Build keys for the visible MIDI range
-  const whites = [];
-  const blacks = [];
+  const { whites, blacks } = useMemo(() => {
+    const whitesLocal = [];
+    const blacksLocal = [];
+    const whitePosByMidi = new Map();
 
-  // Map from a "between white midi" to its x index (white key position)
-  // Example: for C# we want it between C and D, so "betweenMidi" is C's midi.
-  const whitePosByMidi = new Map();
-
-  // First pass: collect whites and record their positions
-  for (let m = startMidi; m <= endMidi; m++) {
-    const pc = ((m % 12) + 12) % 12;
-    if (isWhitePc(pc)) {
-      const xIndex = whites.length;
-      whites.push({ midi: m, label: pcName(m) });
-      whitePosByMidi.set(m, xIndex);
+    // collect whites
+    for (let m = startMidi; m <= endMidi; m++) {
+      const pc = ((m % 12) + 12) % 12;
+      if (isWhitePc(pc)) {
+        const xIndex = whitesLocal.length;
+        whitesLocal.push({ midi: m, label: pcName(m) });
+        whitePosByMidi.set(m, xIndex);
+      }
     }
-  }
 
-  // Second pass: collect blacks with positioning info
-  for (let m = startMidi; m <= endMidi; m++) {
-    const pc = ((m % 12) + 12) % 12;
-    if (!isWhitePc(pc)) {
-      const label = pcName(m);
+    // collect blacks
+    for (let m = startMidi; m <= endMidi; m++) {
+      const pc = ((m % 12) + 12) % 12;
+      if (!isWhitePc(pc)) {
+        const betweenMidi = m - 1; // black sits after previous white
+        if (!whitePosByMidi.has(betweenMidi)) continue;
 
-      // Determine which white key it sits "between" by using the previous white midi.
-      const betweenMidi = m - 1;
+        const whiteIndex = whitePosByMidi.get(betweenMidi);
+        const leftPx = (whiteIndex + 1) * WHITE_W - BLACK_W / 2;
 
-      // If the between white isn't in range (can happen at edges), skip rendering this black key.
-      if (!whitePosByMidi.has(betweenMidi)) continue;
-
-      const whiteIndex = whitePosByMidi.get(betweenMidi);
-      const leftPx = (whiteIndex + 1) * WHITE_W - BLACK_W / 2;
-
-      blacks.push({ midi: m, label, leftPx });
+        blacksLocal.push({ midi: m, label: pcName(m), leftPx });
+      }
     }
-  }
+
+    return { whites: whitesLocal, blacks: blacksLocal };
+  }, [startMidi, endMidi]);
 
   return (
     <div
@@ -88,9 +86,7 @@ export default function Piano({
                 "flex items-end justify-center",
                 "rounded-b-lg",
                 "transition-colors",
-                active
-                  ? "bg-cyan-300 hover:bg-cyan-200"
-                  : "bg-white hover:bg-slate-100",
+                active ? "bg-cyan-300 hover:bg-cyan-200" : "bg-white hover:bg-slate-100",
               ].join(" ")}
               style={{ width: `${WHITE_W}px`, height: `${WHITE_H}px` }}
               title={`${k.label} (MIDI ${k.midi})`}
@@ -114,9 +110,7 @@ export default function Piano({
                 "border border-black/60 text-slate-100",
                 "rounded-b-lg shadow",
                 "transition-colors",
-                active
-                  ? "bg-cyan-300 hover:bg-cyan-200"
-                  : "bg-slate-900 hover:bg-slate-800",
+                active ? "bg-cyan-300 hover:bg-cyan-200" : "bg-slate-900 hover:bg-slate-800",
               ].join(" ")}
               style={{
                 left: `${bk.leftPx}px`,
