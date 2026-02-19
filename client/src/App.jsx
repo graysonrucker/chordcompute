@@ -1,6 +1,5 @@
 // src/App.jsx
-import { useEffect } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Piano from "./components/Piano";
 import FitToWidth from "./components/FitToWidth";
 import KeyboardSideControls from "./components/KeyboardSideControls";
@@ -9,22 +8,37 @@ import { useActiveNotes } from "./hooks/useActiveNotes";
 import { WHITE_W } from "./lib/pianoLayout";
 import { fetchVoicings } from "./lib/api";
 
-async function onGenerate() {
-  setLoading(true);
-  setError("");
-  try {
-    const data = await fetchVoicings({ notes: notes.activeNotes });
-    setResults(data);
-  } catch (e) {
-    setError(e.message || "Failed to generate voicings");
-  } finally {
-    setLoading(false);
-  }
+const BASE_START = 60; // C4
+const BASE_END = 71;   // B4
+
+function makeIsActiveFromNotes(noteList) {
+  const set = new Set(noteList);
+  return (midi) => set.has(midi);
+}
+
+function computeResultRange(voicingNotes) {
+  const minNote = Math.min(...voicingNotes);
+  const maxNote = Math.max(...voicingNotes);
+
+  const leftOctaves = Math.max(0, Math.ceil((BASE_START - minNote) / 12));
+  const rightOctaves = Math.max(0, Math.ceil((maxNote - BASE_END) / 12));
+
+  const startMidi = BASE_START - leftOctaves * 12;
+  const endMidi = BASE_END + rightOctaves * 12;
+
+  const octaveCount = 1 + leftOctaves + rightOctaves;
+  const naturalWidth = octaveCount * 7 * WHITE_W;
+
+  return { startMidi, endMidi, naturalWidth };
 }
 
 export default function App() {
   const range = useKeyboardRange();
   const notes = useActiveNotes([]);
+
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   // 7 white keys per octave
   const octaveCount = 1 + range.leftOctaves + range.rightOctaves;
@@ -39,6 +53,20 @@ export default function App() {
       prev.filter((m) => m >= range.startMidi && m <= range.endMidi)
     );
   }, [range.startMidi, range.endMidi, notes.setActiveNotes]);
+
+  async function onGenerate() {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await fetchVoicings({ notes: notes.activeNotes });
+      setResults(data);
+    } catch (e) {
+      setResults(null);
+      setError(e.message || "Failed to generate voicings");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -99,22 +127,72 @@ export default function App() {
             {notes.activeNotes.length ? notes.activeNotes.join(", ") : "none"}
           </span>
         </div>
-          <button
-            className="mt-4 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded"
-            onClick={async () => {
-              const res = await fetch("/api/voicings", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ notes: notes.activeNotes }),
-            });
-          const data = await res.json();
-          console.log(data);
-          }}
+
+        <button
+          className="mt-4 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-60"
+          onClick={onGenerate}
+          disabled={loading || notes.activeNotes.length === 0}
+          title={notes.activeNotes.length === 0 ? "Select notes first" : ""}
         >
-          Generate
-          </button>
+          {loading ? "Generating..." : "Generate"}
+        </button>
+
+        {error && <div className="mt-4 text-red-300">{error}</div>}
+
+        {results && (
+          <div className="mt-6">
+            <div className="text-slate-300">
+              Found{" "}
+              <span className="text-slate-100 font-semibold">
+                {results.totalFound}
+              </span>{" "}
+              voicings (showing {results.voicings.length})
+              {results.truncatedBecauseComboCap ? (
+                <span className="text-amber-300"> — truncated</span>
+              ) : null}
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+              {(results.voicings || [])
+                .filter((v) => Array.isArray(v.notes) && v.notes.length)
+                .map((v, i) => {
+                  const { startMidi, endMidi, naturalWidth: resWidth } =
+                    computeResultRange(v.notes);
+
+                  return (
+                    <div
+                      key={i}
+                      className="rounded-xl bg-slate-900/60 border border-slate-800 p-3"
+                    >
+                      <div className="text-sm text-slate-300">
+                        #{i + 1} • span {v.span} • score {v.score}
+                      </div>
+
+                      <div className="mt-3">
+                        <FitToWidth
+                          contentWidth={resWidth}
+                          allowUpscale={false}
+                          maxScale={0.95}
+                        >
+                          <Piano
+                            isActive={makeIsActiveFromNotes(v.notes)}
+                            toggleMidi={() => {}}
+                            startMidi={startMidi}
+                            endMidi={endMidi}
+                          />
+                        </FitToWidth>
+                      </div>
+
+                      <div className="mt-2 font-mono text-xs text-slate-400">
+                        [{v.notes.join(", ")}]
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
-    
   );
 }
