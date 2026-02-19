@@ -1,0 +1,14 @@
+services:
+  inverter:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      # optionally set a DB path your server reads:
+      - DB_PATH=/app/server/data/inverter.sqlite
+    volumes:
+      - inverter_data:/app/server/data
+
+volumes:
+  inverter_data:
