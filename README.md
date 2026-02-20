@@ -54,31 +54,34 @@ Pull and run the published image:
 ```bash
 docker pull ghcr.io/graysonrucker/inverter:latest
 docker run -p 3000:3000 ghcr.io/graysonrucker/inverter:latest
+```
 
 Then open:
 
 http://localhost:3000
 
-Option 2 — Local Development
+###Option 2 — Local Development
 
 Clone the repository:
 
+```bash
 git clone https://github.com/graysonrucker/Inverter.git
 cd Inverter
-
+```
 Install backend dependencies:
-
+```bash
 npm install
-
+```
 Install frontend dependencies:
-
+```bash
 cd client
 npm install
-
+```
 Run the backend (from project root):
-
+```bash
 npm start
-
+```
 Run the frontend (from client directory):
-
+```bash
 npm run dev
+```
