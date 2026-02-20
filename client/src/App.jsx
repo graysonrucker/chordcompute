@@ -142,7 +142,7 @@ export default function App() {
                       className="rounded-xl bg-slate-900/60 border border-slate-800 p-3"
                     >
                       <div className="text-sm text-slate-300">
-                        #{i + 1} • span {v.span} • score {v.score}
+                        #{i + 1} • span {v.span}
                       </div>
 
                       <div className="mt-3">

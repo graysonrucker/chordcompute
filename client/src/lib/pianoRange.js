@@ -23,3 +23,16 @@ export function computeResultRange(voicingNotes){
     
     return { startMidi, endMidi, naturalWidth };
 }
+
+export function computeExpandedRange(notes) {
+  const minNote = Math.min(...notes);
+  const maxNote = Math.max(...notes);
+
+  const leftOctaves = Math.max(0, Math.ceil((BASE_START - minNote) / 12));
+  const rightOctaves = Math.max(0, Math.ceil((maxNote - BASE_END) / 12));
+
+  const startMidi = BASE_START - leftOctaves * 12;
+  const endMidi = BASE_END + rightOctaves * 12;
+
+  return { startMidi, endMidi, leftOctaves, rightOctaves, minNote, maxNote };
+}

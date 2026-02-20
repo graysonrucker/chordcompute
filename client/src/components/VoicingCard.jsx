@@ -1,23 +1,8 @@
 import { useMemo } from "react";
 import Piano from "./Piano";
 import FitToWidth from "./FitToWidth";
+import { computeExpandedRange } from "../lib/pianoRange";
 import { WHITE_W } from "../lib/pianoLayout";
-
-const BASE_START = 60; // C4
-const BASE_END = 71;   // B4
-
-function computeExpandedRange(notes) {
-  const minNote = Math.min(...notes);
-  const maxNote = Math.max(...notes);
-
-  const leftOctaves = Math.max(0, Math.ceil((BASE_START - minNote) / 12));
-  const rightOctaves = Math.max(0, Math.ceil((maxNote - BASE_END) / 12));
-
-  const startMidi = BASE_START - leftOctaves * 12;
-  const endMidi = BASE_END + rightOctaves * 12;
-
-  return { startMidi, endMidi, leftOctaves, rightOctaves, minNote, maxNote };
-}
 
 export default function VoicingCard({ voicing, index }) {
   const notesArr = voicing.notes;
@@ -37,7 +22,7 @@ export default function VoicingCard({ voicing, index }) {
   return (
     <div className="rounded-xl bg-slate-900/60 border border-slate-800 p-3">
       <div className="text-sm text-slate-300">
-        #{index + 1} • span {voicing.span} • score {voicing.score}
+        #{index + 1} • span {voicing.span}
       </div>
 
       <div className="mt-3">
