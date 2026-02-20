@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import Piano from "./Piano";
-import FitToWidth from "./FitToWidth";
-import { computeExpandedRange } from "../lib/pianoRange";
-import { WHITE_W } from "../lib/pianoLayout";
+import FitToWidth from "../FitToWidth";
+import { computeExpandedRange } from "../../lib/pianoRange";
+import { WHITE_W } from "../../lib/pianoLayout";
 
 export default function VoicingCard({ voicing, index }) {
   const notesArr = voicing.notes;

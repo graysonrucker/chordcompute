@@ -1,8 +1,8 @@
 // src/components/Piano.jsx
 import { useMemo } from "react";
-import { WHITE_W, BLACK_W, WHITE_H, BLACK_H, pcName, isWhitePc } from "../lib/pianoLayout";
-import WhiteKey from "./piano/WhiteKey";
-import BlackKey from "./piano/BlackKey";
+import { WHITE_W, BLACK_W, WHITE_H, BLACK_H, pcName, isWhitePc } from "../../lib/pianoLayout";
+import WhiteKey from "./WhiteKey";
+import BlackKey from "./BlackKey";
 
 export default function Piano({
   isActive,

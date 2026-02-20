@@ -1,21 +1,19 @@
 // src/App.jsx
-import { useEffect, useState } from "react";
-import Piano from "./components/Piano";
+import { useEffect } from "react";
+import Piano from "./components/piano/Piano";
 import FitToWidth from "./components/FitToWidth";
-import KeyboardSideControls from "./components/KeyboardSideControls";
+import KeyboardSideControls from "./components/piano/PianoSideControls";
 import { useKeyboardRange } from "./hooks/useKeyboardRange";
 import { useActiveNotes } from "./hooks/useActiveNotes";
+import { useVoicingsQuery } from "./hooks/useVoicingsQuery";
 import { WHITE_W } from "./lib/pianoLayout";
-import { fetchVoicings } from "./lib/api";
 import { computeResultRange, makeIsActiveFromNotes } from "./lib/pianoRange";
 
 export default function App() {
   const range = useKeyboardRange();
   const notes = useActiveNotes([]);
 
-  const [results, setResults] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const { results, loading, error, generate } = useVoicingsQuery();
 
   // 7 white keys per octave
   const octaveCount = 1 + range.leftOctaves + range.rightOctaves;
@@ -30,20 +28,6 @@ export default function App() {
       prev.filter((m) => m >= range.startMidi && m <= range.endMidi)
     );
   }, [range.startMidi, range.endMidi, notes.setActiveNotes]);
-
-  async function onGenerate() {
-    setLoading(true);
-    setError("");
-    try {
-      const data = await fetchVoicings({ notes: notes.activeNotes });
-      setResults(data);
-    } catch (e) {
-      setResults(null);
-      setError(e.message || "Failed to generate voicings");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -107,7 +91,7 @@ export default function App() {
 
         <button
           className="mt-4 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-60"
-          onClick={onGenerate}
+          onClick={() => generate(notes.activeNotes)}
           disabled={loading || notes.activeNotes.length === 0}
           title={notes.activeNotes.length === 0 ? "Select notes first" : ""}
         >
