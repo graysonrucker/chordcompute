@@ -1,38 +1,14 @@
-// server/lib/voicings.js
+// - Input: { notes: number[] }
+// - Output: { inputPattern: string, voicings: { notes:number[], span:number, pattern:string, distance:number }[] }
+//
+// Rules:
+// 1) Generate candidates by independently shifting each input note by +/- 12*n octaves.
+// 2) Discard candidates outside 88-key piano range (MIDI 21..108).
+// 3) Sort primarily by span (tightest first), then by closeness to input chord.
+// 4) Keep only the first candidate for each interval-distance pattern (adjacent diffs).
 
-// ---------- helpers ----------
 function uniqSorted(nums) {
   return [...new Set(nums)].sort((a, b) => a - b);
-}
-
-function mod12(n) {
-  return ((n % 12) + 12) % 12;
-}
-
-function pcsFromNotes(notes) {
-  return uniqSorted(notes.map(mod12));
-}
-
-function containsAllPitchClasses(voicingNotes, pcsNeed) {
-  const have = new Set(voicingNotes.map(mod12));
-  for (const pc of pcsNeed) if (!have.has(pc)) return false;
-  return true;
-}
-
-function scoreVoicing(notes) {
-  const span = notes[notes.length - 1] - notes[0];
-
-  // simple doubling penalty (more doubles = slightly worse)
-  const counts = new Map();
-  for (const n of notes) {
-    const pc = mod12(n);
-    counts.set(pc, (counts.get(pc) || 0) + 1);
-  }
-
-  let doublingPenalty = 0;
-  for (const c of counts.values()) doublingPenalty += Math.max(0, c - 1);
-
-  return span * 10 + doublingPenalty * 3;
 }
 
 function sanitizeNotes(inputNotes) {
@@ -43,155 +19,121 @@ function sanitizeNotes(inputNotes) {
   );
 }
 
-function normalizeOptions(input) {
-  const rangeLow = Number.isFinite(input.rangeLow) ? input.rangeLow : 21;
-  const rangeHigh = Number.isFinite(input.rangeHigh) ? input.rangeHigh : 108;
-
-  const minNotes = Number.isFinite(input.minNotes) ? input.minNotes : 3;
-  const maxNotes = Number.isFinite(input.maxNotes) ? input.maxNotes : 12;
-
-  const maxSpan = Number.isFinite(input.maxSpan) ? input.maxSpan : 88;
-
-  // max number of returned results
-  const limit = Number.isFinite(input.limit) ? Math.min(input.limit, 1000) : 200;
-
-  // cap on *enumerated* combinations (prevents runaway)
-  const comboCap = Number.isFinite(input.comboCap) ? Math.max(1, input.comboCap) : 300000;
-
-  return { rangeLow, rangeHigh, minNotes, maxNotes, maxSpan, limit, comboCap };
+function intervalPatternKey(sortedNotes) {
+  if (sortedNotes.length <= 1) return "";
+  const diffs = [];
+  for (let i = 0; i < sortedNotes.length - 1; i++) {
+    diffs.push(sortedNotes[i + 1] - sortedNotes[i]);
+  }
+  return diffs.join(",");
 }
 
-// ---------- combination generator (no huge arrays) ----------
-// yields combinations of indices into `arr` of size k
-function* combinationsOf(arr, k, start = 0, combo = []) {
-  if (combo.length === k) {
-    yield combo.slice();
+function spanOf(sortedNotes) {
+  return sortedNotes[sortedNotes.length - 1] - sortedNotes[0];
+}
+
+function distanceToInput(sortedVoicing, sortedInput) {
+  let sum = 0;
+  for (let i = 0; i < sortedInput.length; i++) {
+    sum += Math.abs(sortedVoicing[i] - sortedInput[i]);
+  }
+  return sum;
+}
+
+function* octaveShiftVectors(k, d, idx = 0, cur = []) {
+  if (idx === k) {
+    yield cur.slice();
     return;
   }
-  const n = arr.length;
-  for (let i = start; i <= n - (k - combo.length); i++) {
-    combo.push(arr[i]);
-    yield* combinationsOf(arr, k, i + 1, combo);
-    combo.pop();
+  for (let x = -d; x <= d; x++) {
+    cur.push(x);
+    yield* octaveShiftVectors(k, d, idx + 1, cur);
+    cur.pop();
   }
 }
 
-// ---------- generation ----------
+function allNotesInRange(sortedNotes, low, high) {
+  // sorted, so we can check ends
+  return sortedNotes[0] >= low && sortedNotes[sortedNotes.length - 1] <= high;
+}
+
+// Internal safety limits
+const LIMIT = 1000;
+const MAX_D = 6;
+const HARD_ENUM_CAP = 500000;
+
+// 88-key piano MIDI range
+const PIANO_LOW = 21;  // A0
+const PIANO_HIGH = 108; // C8
+
 function generateVoicings(input) {
-  // input validation
   if (!input || !Array.isArray(input.notes) || input.notes.length === 0) {
-    return { error: "Body must include { notes: number[] }" };
+    return { error: "Body must include { notes: number[] }", version: VOICINGS_VERSION };
   }
 
-  const notes = sanitizeNotes(input.notes);
-  if (notes.length === 0) {
-    return { error: "No valid numeric notes provided." };
+  const chord = sanitizeNotes(input.notes);
+  if (chord.length === 0) {
+    return { error: "No valid numeric notes provided.", version: VOICINGS_VERSION };
   }
 
-  const pcsNeed = pcsFromNotes(notes);
-  const {
-    rangeLow,
-    rangeHigh,
-    minNotes,
-    maxNotes,
-    maxSpan,
-    limit,
-    comboCap,
-  } = normalizeOptions(input);
+  const k = chord.length;
+  const inputPattern = intervalPatternKey(chord);
 
-  if (rangeHigh < rangeLow) {
-    return { error: "rangeHigh must be >= rangeLow" };
-  }
-  if (minNotes < 1 || maxNotes < minNotes) {
-    return { error: "Invalid minNotes/maxNotes" };
-  }
-
-  // If you require N unique pitch classes, you cannot succeed with fewer than N notes.
-  const minK = Math.max(minNotes, pcsNeed.length);
-
-  if (minK > maxNotes) {
-    return {
-      input: { notes, pcsNeed, rangeLow, rangeHigh, minNotes, maxNotes, maxSpan, limit, comboCap },
-      totalFound: 0,
-      voicings: [],
-      truncatedBecauseComboCap: false,
-      note: `Impossible: need at least ${pcsNeed.length} notes to cover required pitch classes, but maxNotes=${maxNotes}.`,
-    };
-  }
-
-  // Build candidate notes: only notes whose pitch class is in pcsNeed
-  const pcsNeedSet = new Set(pcsNeed);
   const candidates = [];
-  for (let n = rangeLow; n <= rangeHigh; n++) {
-    if (pcsNeedSet.has(mod12(n))) candidates.push(n);
-  }
-
-  // If you have too few candidates to even pick k notes, no results.
-  if (candidates.length < minK) {
-    return {
-      input: { notes, pcsNeed, rangeLow, rangeHigh, minNotes, maxNotes, maxSpan, limit, comboCap },
-      totalFound: 0,
-      voicings: [],
-      truncatedBecauseComboCap: false,
-      note: `Not enough candidates in range to pick ${minK} notes.`,
-    };
-  }
-
-  const results = [];
+  const seenExact = new Set();
   let enumerated = 0;
-  let truncated = false;
 
-  // Main loop
-  for (let k = minK; k <= maxNotes; k++) {
-    // If you request k notes but candidates are fewer, skip
-    if (candidates.length < k) break;
-
-    for (const v of combinationsOf(candidates, k)) {
+  for (let d = 0; d <= MAX_D; d++) {
+    for (const shifts of octaveShiftVectors(k, d)) {
       enumerated++;
-      if (enumerated > comboCap) {
-        truncated = true;
-        break;
-      }
+      if (enumerated > HARD_ENUM_CAP) break;
 
-      // quick span prune (v is sorted because candidates are sorted and we pick increasing indices)
-      const span = v[v.length - 1] - v[0];
-      if (span > maxSpan) continue;
+      const v = chord.map((n, i) => n + 12 * shifts[i]).sort((a, b) => a - b);
 
-      // must contain all required pitch classes
-      if (!containsAllPitchClasses(v, pcsNeed)) continue;
+      if (!allNotesInRange(v, PIANO_LOW, PIANO_HIGH)) continue;
 
-      results.push({
+      const exactKey = v.join(",");
+      if (seenExact.has(exactKey)) continue;
+      seenExact.add(exactKey);
+
+      candidates.push({
         notes: v,
-        span,
-        score: scoreVoicing(v),
+        span: spanOf(v),
+        pattern: intervalPatternKey(v),
+        distance: distanceToInput(v, chord),
       });
     }
-
-    if (truncated) break;
+    if (enumerated > HARD_ENUM_CAP) break;
   }
 
-  results.sort((a, b) => a.score - b.score);
+  candidates.sort((a, b) => {
+    if (a.span !== b.span) return a.span - b.span;
+    if (a.distance !== b.distance) return a.distance - b.distance;
+
+    const ab = Math.abs(a.notes[0] - chord[0]);
+    const bb = Math.abs(b.notes[0] - chord[0]);
+    if (ab !== bb) return ab - bb;
+
+    for (let i = 0; i < a.notes.length; i++) {
+      if (a.notes[i] !== b.notes[i]) return a.notes[i] - b.notes[i];
+    }
+    return 0;
+  });
+
+  const seenPatterns = new Set();
+  const out = [];
+
+  for (const c of candidates) {
+    if (seenPatterns.has(c.pattern)) continue;
+    seenPatterns.add(c.pattern);
+    out.push(c);
+    if (out.length >= LIMIT) break;
+  }
 
   return {
-    input: {
-      notes,
-      pcsNeed,
-      rangeLow,
-      rangeHigh,
-      minNotes,
-      maxNotes,
-      maxSpan,
-      limit,
-      comboCap,
-      effectiveMinNotes: minK, // helpful for debugging why k started where it did
-    },
-    totalFound: results.length,
-    voicings: results.slice(0, limit),
-    truncatedBecauseComboCap: truncated,
-    enumeratedCombos: enumerated, // helpful for debugging
+    inputPattern,
+    voicings: out,
   };
 }
 
-module.exports = {
-  generateVoicings,
-};
+module.exports = { generateVoicings };
