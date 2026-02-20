@@ -1,4 +1,3 @@
-// src/hooks/useActiveNotes.js
 import { useCallback, useState } from "react";
 
 export function useActiveNotes(initial = []) {

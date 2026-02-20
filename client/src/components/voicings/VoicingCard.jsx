@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import Piano from "./Piano";
+import Piano from "../piano/Piano";
 import FitToWidth from "../FitToWidth";
 import { computeExpandedRange } from "../../lib/pianoRange";
 import { WHITE_W } from "../../lib/pianoLayout";

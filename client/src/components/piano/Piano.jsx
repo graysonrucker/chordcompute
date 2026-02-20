@@ -1,4 +1,3 @@
-// src/components/Piano.jsx
 import { useMemo } from "react";
 import { WHITE_W, BLACK_W, WHITE_H, BLACK_H, pcName, isWhitePc } from "../../lib/pianoLayout";
 import WhiteKey from "./WhiteKey";

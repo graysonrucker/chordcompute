@@ -1,4 +1,3 @@
-// src/components/piano/BlackKey.jsx
 export default function BlackKey({ midi, label, active, onClick, leftPx, widthPx, heightPx }) {
   return (
     <button

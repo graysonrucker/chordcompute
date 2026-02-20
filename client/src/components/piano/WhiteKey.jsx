@@ -1,4 +1,3 @@
-// src/components/piano/WhiteKey.jsx
 export default function WhiteKey({ midi, label, active, onClick, widthPx, heightPx }) {
   return (
     <button
