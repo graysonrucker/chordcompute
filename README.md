@@ -60,7 +60,7 @@ Then open:
 
 http://localhost:3000
 
-###Option 2 — Local Development
+### Local Development
 
 Clone the repository:
 
@@ -68,20 +68,29 @@ Clone the repository:
 git clone https://github.com/graysonrucker/Inverter.git
 cd Inverter
 ```
+
 Install backend dependencies:
+
 ```bash
+cd server
 npm install
 ```
+
 Install frontend dependencies:
+
 ```bash
-cd client
+cd ../client
 npm install
 ```
-Run the backend (from project root):
+
+Run the backend (from the server directory):
+
 ```bash
 npm start
 ```
-Run the frontend (from client directory):
+
+Run the frontend (from the client directory):
+
 ```bash
 npm run dev
 ```
