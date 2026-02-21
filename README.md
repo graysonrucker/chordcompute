@@ -75,28 +75,30 @@ git clone https://github.com/graysonrucker/Inverter.git
 cd Inverter
 ```
 
-Install backend dependencies:
+Install backend dependencies (Inside server directory):
 
 ```bash
-cd server
 npm install
 ```
 
-Install frontend dependencies:
+Install frontend dependencies (Inside client directory):
 
 ```bash
-cd ../client
 npm install
 ```
 
-Run the backend (from the server directory):
+Run the backend (Inside server directory):
 
 ```bash
 npm start
 ```
 
-Run the frontend (from the client directory):
+Run the frontend (Inside client directory):
 
 ```bash
 npm run dev
 ```
+
+Then open:
+
+http://localhost:3000
