@@ -10,7 +10,7 @@ export default function KeyboardSideControls({ canAdd, canRemove, onAdd, onRemov
       </button>
 
       {/* Reserve vertical space so layout doesn't jump */}
-      <div className="mt-2 w-full h-[36px] flex items-center justify-center">
+      <div className="mt-2 w-full h-9 flex items-center justify-center">
         {canRemove && (
           <button
             onClick={onRemove}
