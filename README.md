@@ -1,10 +1,10 @@
 # Inverter
 
-Inverter is a full-stack web application that generates all piano chord voicings across the 88-key range for a given input chord.
+Inverter is a full-stack web application that generates piano chord voicings across the 88-key range for a given input chord.
 
 ## Tech Stack
 
-- Frontend: React (Vite) + TailwindCSS  
+- Frontend: React + Vite + TailwindCSS  
 - Backend: Node.js + Express  
 - Database: SQLite  
 - Deployment: Docker  
@@ -16,12 +16,18 @@ Inverter is a full-stack web application that generates all piano chord voicings
 Inverter takes a set of MIDI note inputs and generates musically valid piano voicings that:
 
 - Contain the required pitch classes
-- Fit within configurable span limits
-- Respect minimum and maximum note counts
 - Stay within the 88-key piano range
 - Avoid duplicate interval structures
 
-The backend exposes a REST API that performs constraint-based voicing generation and ranking. The frontend provides an interactive piano interface for selecting notes and visualizing generated voicings.
+The backend exposes a REST API that performs voicing generation. The frontend provides an interactive piano interface for selecting notes and visualizing generated voicings.
+
+Planned Changes/Features
+
+- Voicings fit within configurable span limits
+- Sorting options for voicing results (Currently sorted by least span to greatest span)
+- Filters for voicing generation, such as human playable, allowing doubling, etc.
+- Chord naming for currently selected chord and/or generated voicings
+- Auto-selection of notes from given root and templates for chord quality + extensions + omitted notes
 
 ---
 
@@ -60,7 +66,7 @@ Then open:
 
 http://localhost:3000
 
-### Local Development
+### Local Development (Requires Node.js 18+ and Git)
 
 Clone the repository:
 
@@ -69,28 +75,30 @@ git clone https://github.com/graysonrucker/Inverter.git
 cd Inverter
 ```
 
-Install backend dependencies:
+Install backend dependencies (Inside server directory):
 
 ```bash
-cd server
 npm install
 ```
 
-Install frontend dependencies:
+Install frontend dependencies (Inside client directory):
 
 ```bash
-cd ../client
 npm install
 ```
 
-Run the backend (from the server directory):
+Run the backend (Inside server directory):
 
 ```bash
 npm start
 ```
 
-Run the frontend (from the client directory):
+Run the frontend (Inside client directory):
 
 ```bash
 npm run dev
 ```
+
+Then open:
+
+http://localhost:5173
