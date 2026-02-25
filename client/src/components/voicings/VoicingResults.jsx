@@ -51,7 +51,7 @@ export default function VoicingsResults({ results }) {
       {/* scroll container */}
       <div
         ref={parentRef}
-        className="mt-4 h-[70vh] min-h-[400px] w-full overflow-auto"
+        className="mt-4 h-[86vh] min-h-[400px] w-full overflow-auto"
       >
         {/* spacer element */}
         <div
