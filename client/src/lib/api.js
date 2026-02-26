@@ -1,14 +1,19 @@
-export async function fetchVoicings(payload) {
-  const res = await fetch("/api/voicings", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+import { generateVoicingsWasm } from "../wasm/voicingsClient";
 
-  if (!res.ok) {
-    const msg = await res.text().catch(() => "");
-    throw new Error(msg || `Request failed: ${res.status}`);
+export async function fetchVoicings(payload) {
+  // Expect payload like: { notes: number[] }
+  const inputNotes = payload?.notes;
+
+  if (!Array.isArray(inputNotes) || inputNotes.length === 0) {
+    throw new Error("Invalid payload: expected { notes: number[] }");
   }
 
-  return res.json();
+  const { status, voicings } = await generateVoicingsWasm(inputNotes);
+
+  if (status !== 0) {
+    throw new Error(`WASM voicing generation failed (status=${status})`);
+  }
+
+  // Return the same shape your UI uses: results.voicings
+  return { voicings };
 }

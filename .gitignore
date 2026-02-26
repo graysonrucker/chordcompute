@@ -17,3 +17,6 @@ dist/
 
 #VSCode
 .vscode
+
+#C++
+*.exe
