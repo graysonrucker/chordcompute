@@ -12,6 +12,7 @@ static inline int pc12(int midi) {
 }
 
 VoicingGenerator::VoicingGenerator(const std::vector<int>& inputChord) {
+    originalInput = inputChord;
     pitchClassSequence.reserve(inputChord.size());
     for (int midi : inputChord) {
         pitchClassSequence.push_back(pc12(midi));
@@ -38,21 +39,25 @@ VoicingGenerator::Status VoicingGenerator::getStatus() const {
 }
 
 // 64-bit FNV-1a style hash of the adjacent diffs.
+static inline uint64_t fnv1a64_step(uint64_t h, uint64_t x) {
+    // FNV-1a 64-bit
+    h ^= x;
+    h *= 1099511628211ULL;
+    return h;
+}
+
 uint64_t VoicingGenerator::structureKey(const std::vector<int>& voicing) const {
-    // FNV-1a offset basis
     uint64_t h = 1469598103934665603ULL;
-    // Mix in each diff as a byte-ish value (but diffs can exceed 255, so mix 4 bytes)
-    for (int i = 1; i < (int)voicing.size(); ++i) {
-        uint32_t d = (uint32_t)(voicing[i] - voicing[i - 1]);
-        // Mix 4 bytes of d
-        for (int k = 0; k < 4; ++k) {
-            uint8_t b = (uint8_t)((d >> (8 * k)) & 0xFF);
-            h ^= (uint64_t)b;
-            h *= 1099511628211ULL;
-        }
-        // Separator byte to reduce ambiguity (optional but helps)
-        h ^= 0xFFULL;
-        h *= 1099511628211ULL;
+
+    const int n = (int)voicing.size();
+    if (n <= 1) return fnv1a64_step(h, (uint64_t)n);
+
+    h = fnv1a64_step(h, (uint64_t)(n - 1));
+
+    for (int i = 1; i < n; ++i) {
+        // Assumes voicing is sorted ascending; 
+        const uint8_t d = (uint8_t)(voicing[i] - voicing[i - 1]);
+        h = fnv1a64_step(h, (uint64_t)d);
     }
     return h;
 }
@@ -102,17 +107,21 @@ int32_t* VoicingGenerator::generate() {
         lastResultsSize = 0;
         return nullptr;
     }
+            
+    int64_t key = structureKey(originalInput);
+    knownStructures.emplace(key);
+    
 
     permute(0);
 
     // Deterministic ordering: span then lexicographic
-    /*std::sort(results.begin(), results.end(),
+    std::sort(results.begin(), results.end(),
               [](const std::vector<int>& a, const std::vector<int>& b) {
                   int spanA = a.back() - a.front();
                   int spanB = b.back() - b.front();
                   if (spanA != spanB) return spanA < spanB;
                   return a < b;
-              });*/
+              });
 
     return flatten(results);
 }
@@ -147,7 +156,7 @@ void VoicingGenerator::backtrack(int depth, int prevMidi) {
     }
 
     int pitchClass = workingSequence[depth];
-    const std::vector<int>& candidates = midiTable[pitchClass];
+    const std::vector<uint8_t>& candidates = midiTable[pitchClass];
 
     int remaining = (int)workingSequence.size() - depth - 1;
     int maxThis = 108 - remaining;

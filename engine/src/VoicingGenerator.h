@@ -30,11 +30,12 @@ public:
     Status getStatus() const;
 
 private:
-    std::vector<int> pitchClassSequence;
-    std::vector<int> workingSequence;
+    std::vector<int32_t> originalInput;
+    std::vector<uint8_t> pitchClassSequence;
+    std::vector<uint8_t> workingSequence;
     std::vector<int> current;
 
-    std::vector<int> midiTable[12];
+    std::vector<uint8_t> midiTable[12];
 
     // WASM-friendly: store compact keys instead of strings
     std::unordered_set<uint64_t> knownStructures;

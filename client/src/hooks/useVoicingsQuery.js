@@ -12,7 +12,10 @@ export function useVoicingsQuery() {
     setLoading(true);
     setError("");
 
+    await new Promise(requestAnimationFrame);
+
     try {
+      
       const data = await fetchVoicings({ notes: activeNotes });
       setResults(data);
     } catch (e) {

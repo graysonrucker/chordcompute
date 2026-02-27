@@ -38,16 +38,8 @@ export default function VoicingsResults({ results }) {
   return (
     <div className="mt-6">
       <div className="text-slate-300">
-        Found{" "}
-        <span className="text-slate-100 font-semibold">
-          {results.totalFound}
-        </span>{" "}
-        voicings (showing {voicings.length})
-        {results.truncatedBecauseComboCap && (
-          <span className="text-amber-300"> — truncated</span>
-        )}
+        Found {voicings.length} voicings
       </div>
-
       {/* scroll container */}
       <div
         ref={parentRef}
