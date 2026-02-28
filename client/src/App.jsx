@@ -9,9 +9,19 @@ import VoicingsResults from "./components/voicings/VoicingResults";
 export default function App() {
   const range = useKeyboardRange();
   const notes = useActiveNotes([]);
-  const { results, loading, error, generate } = useVoicingsQuery();
 
-  // Clear any selected notes that are no longer visible when the range changes
+  const {
+    results,
+    loading,
+    pageLoading,
+    error,
+    generate,
+    nextPage,
+    prevPage,
+    canPrev,
+    canNext,
+  } = useVoicingsQuery();
+
   useEffect(() => {
     notes.setActiveNotes((prev) =>
       prev.filter((m) => m >= range.startMidi && m <= range.endMidi)
@@ -34,6 +44,31 @@ export default function App() {
         />
 
         {error && <div className="mt-4 text-red-300">{error}</div>}
+
+        {results && (
+          <div className="mt-6 flex items-center gap-2">
+            <button
+              className="rounded bg-slate-800 px-3 py-1 text-slate-100 disabled:opacity-50"
+              onClick={prevPage}
+              disabled={!canPrev || loading || pageLoading}
+            >
+              Prev
+            </button>
+
+            <button
+              className="rounded bg-slate-800 px-3 py-1 text-slate-100 disabled:opacity-50"
+              onClick={nextPage}
+              disabled={!canNext || loading || pageLoading}
+            >
+              Next
+            </button>
+
+            <div className="ml-3 text-slate-300">
+              Showing {results.offset + 1}–
+              {Math.min(results.offset + results.limit, results.count)} of {results.count}
+            </div>
+          </div>
+        )}
 
         <VoicingsResults results={results} />
       </div>

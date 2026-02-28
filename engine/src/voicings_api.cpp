@@ -2,15 +2,19 @@
 #include <cstdint>
 #include <vector>
 
-/*emcc VoicingGenerator.cpp voicings_api.cpp \
-  -O3 -std=c++20 \
-  -sMODULARIZE=1 -sEXPORT_ES6=1 \
-  -sENVIRONMENT=web \
-  -sALLOW_MEMORY_GROWTH=1 \
-  -sEXPORT_NAME=createVoicingsModule \
-  -sEXPORTED_FUNCTIONS='["_vg_generate_flat","_vg_free","_malloc","_free"]' \
-  -sEXPORTED_RUNTIME_METHODS='["cwrap"]' \
-  -o ../../client/src/wasm/voicings.mjs*/
+/*mkdir -p ../../server/wasm
+
+emcc voicings_api.cpp VoicingGenerator.cpp \
+  -O3 \
+  -s MODULARIZE=1 \
+  -s ENVIRONMENT=node \
+  -s EXPORT_NAME=createVoicingsModule \
+  -s EXPORTED_RUNTIME_METHODS='["cwrap","ccall"]' \
+  -s EXPORTED_FUNCTIONS='["_malloc","_free","_vg_generate_flat","_vg_free"]' \
+  -s ALLOW_MEMORY_GROWTH=1 \
+  -s MAXIMUM_MEMORY=2147483648 \
+  -s ASSERTIONS=1 \
+  -o ../../server/wasm/voicings.node.js*/
 
 extern "C" {
 

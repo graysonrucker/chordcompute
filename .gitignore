@@ -20,3 +20,6 @@ dist/
 
 #C++
 *.exe
+
+#jobs
+/server/jobs/*

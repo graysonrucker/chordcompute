@@ -1,18 +1,24 @@
-import createVoicingsModule from "./voicings.mjs";
+// server/wasm/voicingsClient.js
+const path = require("path");
+const fs = require("fs");
+const createVoicingsModule = require("./voicings.node.js");
 
 let modulePromise = null;
 
 async function getModule() {
   if (!modulePromise) {
+    const wasmPath = path.join(__dirname, "voicings.node.wasm");
+    const wasmBinary = fs.readFileSync(wasmPath);
+
     modulePromise = createVoicingsModule({
-      // Vite-friendly way to locate voicings.wasm next to voicings.mjs
-      locateFile: (p) => new URL(`./${p}`, import.meta.url).toString(),
+      wasmBinary, // avoids fetch() issues
+      locateFile: (p) => path.join(__dirname, p),
     });
   }
   return modulePromise;
 }
 
-export async function generateVoicingsWasm(inputNotes) {
+async function generateFlat(inputNotes) {
   const Module = await getModule();
 
   const vg_generate_flat = Module.cwrap(
@@ -33,27 +39,19 @@ export async function generateVoicingsWasm(inputNotes) {
   const outSize = Module.HEAP32[outSizePtr >> 2];
   const outStatus = Module.HEAP32[outStatusPtr >> 2];
 
-  // cleanup input/status allocations
   Module._free(inPtr);
   Module._free(outSizePtr);
   Module._free(outStatusPtr);
 
   if (outStatus !== 0 || !outPtr || outSize <= 0) {
     if (outPtr) vg_free(outPtr);
-    return { status: outStatus, voicings: [] };
+    return { status: outStatus, flat: null };
   }
 
   const flat = Module.HEAP32.slice(outPtr >> 2, (outPtr >> 2) + outSize);
   vg_free(outPtr);
 
-  // decode: [len, ...notes][len, ...notes]...
-  const voicings = [];
-  for (let i = 0; i < flat.length; ) {
-    const len = flat[i++];
-    const arr = Array.from(flat.slice(i, i + len));
-    i += len;
-    voicings.push({ notes: arr });
-  }
-
-  return { status: 0, voicings };
+  return { status: 0, flat };
 }
+
+module.exports = { generateFlat };
