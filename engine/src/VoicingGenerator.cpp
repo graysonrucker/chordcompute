@@ -1,33 +1,30 @@
 #include "VoicingGenerator.h"
+#include "FlatHashSet64.h"
 
-#include <array>
-#include <algorithm>
-#include <climits>   // INT32_MAX
-#include <new>       // std::nothrow
+#include <cstdint>
 
-static inline int pc12(int midi) {
-    // Safe modulo for any integer
-    int r = midi % 12;
-    return (r < 0) ? (r + 12) : r;
+// 64-bit FNV-1a step
+static inline uint64_t fnv1a64_step(uint64_t h, uint64_t x) {
+    h ^= x;
+    h *= 1099511628211ULL;
+    return h;
 }
 
 VoicingGenerator::VoicingGenerator(const std::vector<int>& inputChord) {
-    originalInput = inputChord;
-    pitchClassSequence.reserve(inputChord.size());
-    for (int midi : inputChord) {
-        pitchClassSequence.push_back(pc12(midi));
-    }
+    originalInput.assign(inputChord.begin(), inputChord.end());
     buildMidiTable();
+    lastStatus = Status::Ok;
+    lastResultsSize = 0;
 }
 
 void VoicingGenerator::buildMidiTable() {
-    for (int midi = 21; midi <= 108; ++midi) {
-        midiTable[pc12(midi)].push_back(midi);
-    }
-}
+    // Clear in case constructor is ever reused differently
+    for (int pc = 0; pc < 12; ++pc) midiTable[pc].clear();
 
-void VoicingGenerator::freeResults(int32_t* ptr) {
-    delete[] ptr;
+    for (int midi = 21; midi <= 108; ++midi) {
+        // midi fits in uint8_t (21..108)
+        midiTable[pc12(midi)].push_back((uint8_t)midi);
+    }
 }
 
 int32_t VoicingGenerator::getLastResultSize() const {
@@ -36,14 +33,6 @@ int32_t VoicingGenerator::getLastResultSize() const {
 
 VoicingGenerator::Status VoicingGenerator::getStatus() const {
     return lastStatus;
-}
-
-// 64-bit FNV-1a style hash of the adjacent diffs.
-static inline uint64_t fnv1a64_step(uint64_t h, uint64_t x) {
-    // FNV-1a 64-bit
-    h ^= x;
-    h *= 1099511628211ULL;
-    return h;
 }
 
 uint64_t VoicingGenerator::structureKey(const std::vector<int>& voicing) const {
@@ -55,117 +44,171 @@ uint64_t VoicingGenerator::structureKey(const std::vector<int>& voicing) const {
     h = fnv1a64_step(h, (uint64_t)(n - 1));
 
     for (int i = 1; i < n; ++i) {
-        // Assumes voicing is sorted ascending; 
-        const uint8_t d = (uint8_t)(voicing[i] - voicing[i - 1]);
+        const uint8_t d = (uint8_t)(voicing[i] - voicing[i - 1]); // voicing sorted
         h = fnv1a64_step(h, (uint64_t)d);
     }
     return h;
 }
 
-int32_t* VoicingGenerator::flatten(const std::vector<std::vector<int>>& resultsIn) {
-    size_t sum = 0;
+void VoicingGenerator::begin() {
+    // Keep capacity for speed across runs. If you want to free memory between runs:
+    // knownStructures.reset();
+    knownStructures.reset();
 
-    for (const std::vector<int>& v : resultsIn) {
-        sum += (size_t)v.size() + 1u;  // +1 for length prefix
-        if (sum > (size_t)INT32_MAX) {
-            lastStatus = Status::Overflow;
-            lastResultsSize = 0;
-            return nullptr;
-        }
-    }
-
-    // Allocate with nothrow so we don’t rely on exceptions
-    int32_t* out = new (std::nothrow) int32_t[sum];
-    if (!out && sum != 0) {
-        lastStatus = Status::AllocationFailed;
-        lastResultsSize = 0;
-        return nullptr;
-    }
-
-    size_t i = 0;
-    for (const std::vector<int>& v : resultsIn) {
-        out[i++] = (int32_t)v.size();
-        for (int note : v) {
-            out[i++] = (int32_t)note;
-        }
-    }
-
-    lastStatus = Status::Ok;
-    lastResultsSize = (int32_t)sum;
-    return out;
-}
-
-int32_t* VoicingGenerator::generate() {
-    results.clear();
-    knownStructures.clear();
     current.clear();
+    stack.clear();
 
-    workingSequence = pitchClassSequence;
+    finished = false;
+    lastStatus = Status::Ok;
+    lastResultsSize = 0;
 
-    if (workingSequence.empty()) {
+    if (originalInput.empty()) {
+        finished = true;
         lastStatus = Status::EmptyInput;
-        lastResultsSize = 0;
-        return nullptr;
-    }
-            
-    int64_t key = structureKey(originalInput);
-    knownStructures.emplace(key);
-    
-
-    permute(0);
-
-    // Deterministic ordering: span then lexicographic
-    std::sort(results.begin(), results.end(),
-              [](const std::vector<int>& a, const std::vector<int>& b) {
-                  int spanA = a.back() - a.front();
-                  int spanB = b.back() - b.front();
-                  if (spanA != spanB) return spanA < spanB;
-                  return a < b;
-              });
-
-    return flatten(results);
-}
-
-// Unique permutations of pitch classes, then backtrack() for each permutation.
-void VoicingGenerator::permute(int start) {
-    if (start >= (int)workingSequence.size() - 1) {
-        backtrack(0, 20); // 20 so first candidate can be 21+
         return;
     }
 
-    std::array<bool, 12> seen{};
-    for (int i = start; i < (int)workingSequence.size(); ++i) {
-        int pc = workingSequence[i];
-        if (seen[pc]) continue;
+    for (int pc = 0; pc < 12; ++pc) remainingCounts[pc] = 0;
+    for (int midi : originalInput) remainingCounts[pc12(midi)]++;
 
-        seen[pc] = true;
-        std::swap(workingSequence[start], workingSequence[i]);
-        permute(start + 1);
-        std::swap(workingSequence[start], workingSequence[i]);
-    }
+    totalNotes = (int32_t)originalInput.size();
+
+    Frame root{};
+    root.prevMidi = 20;
+    root.chosenPc = -1;
+    for (int pc = 0; pc < 12; ++pc) root.idx[pc] = 0;
+
+    stack.push_back(root);
 }
 
-void VoicingGenerator::backtrack(int depth, int prevMidi) {
-    if (depth == (int)workingSequence.size()) {
-        uint64_t key = structureKey(current);
-        if (!knownStructures.count(key)) {
-            knownStructures.emplace(key);
-            results.push_back(current);
+// --- k-way merge helper ---
+// Chooses the smallest next MIDI among pitch classes with remainingCounts[pc] > 0,
+// subject to m > f.prevMidi.
+// Advances f.idx[pc] past <= prevMidi and consumes one candidate (increments idx) for chosen pc.
+bool VoicingGenerator::pickNextCandidate(Frame& f, int8_t& outPc, int16_t& outMidi) {
+    int bestMidi = 1000000000;
+    int bestPc = -1;
+
+    for (int pc = 0; pc < 12; ++pc) {
+        if (remainingCounts[pc] <= 0) continue;
+
+        const auto& vec = midiTable[pc];
+
+        uint8_t i = f.idx[pc];
+        while (i < (uint8_t)vec.size() && vec[i] <= f.prevMidi) ++i;
+        f.idx[pc] = i;
+
+        if (i >= (uint8_t)vec.size()) continue;
+
+        int m = (int)vec[i];
+        if (m < bestMidi) {
+            bestMidi = m;
+            bestPc = pc;
         }
-        return;
     }
 
-    int pitchClass = workingSequence[depth];
-    const std::vector<uint8_t>& candidates = midiTable[pitchClass];
+    if (bestPc < 0) return false;
 
-    int remaining = (int)workingSequence.size() - depth - 1;
-    int maxThis = 108 - remaining;
+    // Consume this candidate at this depth
+    f.idx[bestPc]++;
 
-    for (int m : candidates) {
-        if (m <= prevMidi) continue;
-        if (m > maxThis) break;
-        current.push_back(m);
-        backtrack(depth + 1, m);
+    outPc = (int8_t)bestPc;
+    outMidi = (int16_t)bestMidi;
+    return true;
+}
+
+int32_t VoicingGenerator::nextBatch(int32_t* out, int32_t capInts) {
+    if (finished) {
+        lastStatus = Status::Done;
+        lastResultsSize = 0;
+        return 0;
+    }
+
+    if (!out || capInts <= 0) {
+        lastStatus = Status::BadArgs;
+        lastResultsSize = 0;
+        return -1;
+    }
+
+    outBuf = out;
+    outCap = capInts;
+    outPos = 0;
+
+    while (!finished) {
+        bool shouldStop = step(); // true => buffer full; stop batch
+        if (shouldStop) break;
+    }
+
+    lastResultsSize = outPos;
+
+    if (outPos == 0 && finished && lastStatus == Status::Ok) {
+        lastStatus = Status::Done;
+        return 0;
+    }
+
+    // If it wrote something, status is OK
+    lastStatus = Status::Ok;
+    return outPos;
+}
+
+bool VoicingGenerator::step() {
+    while (!stack.empty()) {
+        int depth = (int)current.size();
+
+        // Leaf: we have totalNotes chosen
+        if (depth == totalNotes) {
+            if (emitCurrent()) return true; // buffer full
+            popFrame();                     // backtrack
+            continue;
+        }
+
+        Frame& f = stack.back();
+
+        int8_t pc;
+        int16_t m;
+        if (!pickNextCandidate(f, pc, m)) {
+            // No more candidates at this depth
+            popFrame();
+            continue;
+        }
+
+        // Choose (pc, m)
+        remainingCounts[pc]--;
+        current.push_back((int)m);
+
+        // Child inherits the parent's cursor state (k-way merge resume)
+        Frame child = f;        // copies idx[12]
+        child.prevMidi = m;
+        child.chosenPc = pc;
+
+        stack.push_back(child);
+    }
+
+    finished = true;
+    return false;
+}
+
+void VoicingGenerator::popFrame() {
+    Frame f = stack.back();
+    stack.pop_back();
+
+    if (f.chosenPc != -1) {
+        remainingCounts[(int)f.chosenPc]++;
         current.pop_back();
     }
+}
+
+bool VoicingGenerator::emitCurrent() {
+    uint64_t key = structureKey(current);
+
+    // Exact dedupe, lower memory than std::unordered_set in wasm
+    if (!knownStructures.insert(key)) return false;
+
+    const int n = (int)current.size();
+    if (outPos + 1 + n > outCap) return true; // buffer full
+
+    outBuf[outPos++] = (int32_t)n;
+    for (int note : current) outBuf[outPos++] = (int32_t)note;
+
+    return false;
 }

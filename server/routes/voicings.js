@@ -5,7 +5,10 @@ const path = require("path");
 const { Worker } = require("worker_threads");
 
 const router = express.Router();
-const jobs = new Map(); // in-memory registry (OK for now)
+
+// Optional in-memory registry. With meta.json on disk, you don't strictly need it.
+// Keeping it speeds up status/page without reading disk every time.
+const jobs = new Map();
 
 function newJobId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
@@ -31,7 +34,7 @@ function getJobOrMeta(req, jobId) {
     if (!fs.existsSync(metaPath)) return { job: null, meta: null };
 
     const meta = readMeta(metaPath);
-    // minimal synthesized job object so status/page can work
+
     const synthesized = {
       jobId,
       state: meta.state,
@@ -42,8 +45,10 @@ function getJobOrMeta(req, jobId) {
       jobDir,
       dataPath,
       metaPath,
+      worker: null,
     };
-    // optionally repopulate in-memory map
+
+    // repopulate in-memory map (helps for subsequent calls)
     jobs.set(jobId, synthesized);
     return { job: synthesized, meta };
   } catch {
@@ -74,7 +79,7 @@ router.post("/jobs", (req, res) => {
     jobId,
     state: "running", // queued | running | done | error | canceled
     n,
-    count: 0, // number of voicings written so far
+    count: 0, // number of voicings generated (not necessarily pageable until done)
     createdAt: Date.now(),
     error: null,
     jobDir,
@@ -92,10 +97,8 @@ router.post("/jobs", (req, res) => {
     createdAt: job.createdAt,
   });
 
-  // Return immediately — this is what makes the API truly "job-based"
   res.json({ jobId });
 
-  // Run heavy work in a Node Worker Thread
   const workerPath = path.join(__dirname, "../workers/voicingsWorker.js");
   const worker = new Worker(workerPath, {
     workerData: {
@@ -132,7 +135,6 @@ router.post("/jobs", (req, res) => {
     job.error = err?.message || String(err);
     job.worker = null;
 
-    // best-effort meta update
     try {
       writeMeta(metaPath, {
         jobId,
@@ -173,8 +175,6 @@ router.get("/jobs/:jobId/status", (req, res) => {
   const { job } = getJobOrMeta(req, jobId);
   if (!job) return res.status(404).json({ error: "Job not found" });
 
-  // (Optional) If you want the meta.json to be the true source-of-truth,
-  // read it here and return that instead of the in-memory job.
   res.json({
     jobId,
     state: job.state,
@@ -186,9 +186,12 @@ router.get("/jobs/:jobId/status", (req, res) => {
 
 /**
  * GET /api/voicings/jobs/:jobId/page?offset&limit
- * Returns: { jobId, n, offset, items:[{notes:number[]}] }
  *
- * This version supports paging while running: it clamps to `job.count`.
+ * IMPORTANT CHANGE:
+ * Because we now sort-by-span using span buckets and concatenate at the end,
+ * `data.bin` is only valid after the job is DONE.
+ *
+ * Returns: { jobId, n, offset, items:[{notes:number[]}] }
  */
 router.get("/jobs/:jobId/page", (req, res) => {
   const jobId = req.params.jobId;
@@ -198,7 +201,19 @@ router.get("/jobs/:jobId/page", (req, res) => {
   if (job.state === "error") return res.status(409).json({ error: "Job failed", detail: job.error });
   if (job.state === "canceled") return res.status(410).json({ error: "Job was canceled" });
 
-  // allow running OR done; just clamp reads to whatever is written so far
+  // NEW: only allow paging when done (data.bin is finalized then)
+  if (job.state !== "done") {
+    return res.json({
+      jobId,
+      n: job.n,
+      offset: Math.max(0, parseInt(req.query.offset || "0", 10)),
+      items: [],
+      state: job.state,
+      available: 0,
+      note: "Paging is available once the job is done.",
+    });
+  }
+
   const offset = Math.max(0, parseInt(req.query.offset || "0", 10));
   const limit = Math.max(1, Math.min(5000, parseInt(req.query.limit || "200", 10)));
 
@@ -210,13 +225,14 @@ router.get("/jobs/:jobId/page", (req, res) => {
     return res.json({ jobId, n: job.n, offset: start, items: [], state: job.state, available });
   }
 
+  // data.bin is notes-only fixed-size records: n int32 per voicing
   const bytesPerVoicing = job.n * 4;
   const byteOffset = start * bytesPerVoicing;
   const byteLength = (end - start) * bytesPerVoicing;
 
-  // If the file doesn't exist yet (early in generation), return empty
   if (!fs.existsSync(job.dataPath)) {
-    return res.json({ jobId, n: job.n, offset: start, items: [], state: job.state, available });
+    // Shouldn't happen if state===done, but be defensive
+    return res.json({ jobId, n: job.n, offset: start, items: [], state: job.state, available: 0 });
   }
 
   const fd = fs.openSync(job.dataPath, "r");
@@ -246,7 +262,6 @@ router.delete("/jobs/:jobId", async (req, res) => {
   job.state = "canceled";
   job.error = null;
 
-  // If a worker is running, terminate it (best-effort cancel)
   if (job.worker) {
     try {
       await job.worker.terminate();
