@@ -22,6 +22,8 @@ public:
     // After begin(), call nextBatch() repeatedly until it returns 0 (Done).
     void begin();
 
+    void beginForSpan(int16_t span);
+
     // Writes as many flattened records as will fit into `out`.
     // Record format: [len, note1, note2, ...] repeated.
     //
@@ -98,4 +100,6 @@ private:
 
     // Hash of adjacent differences (structure key) for the current voicing.
     uint64_t structureKey(const std::vector<int>& voicing) const;
+
+    int16_t targetSpan = -1; // -1 => no span filtering
 };

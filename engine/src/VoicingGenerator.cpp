@@ -51,8 +51,36 @@ uint64_t VoicingGenerator::structureKey(const std::vector<int>& voicing) const {
 }
 
 void VoicingGenerator::begin() {
-    // Keep capacity for speed across runs. If you want to free memory between runs:
-    // knownStructures.reset();
+    knownStructures.reset();
+
+    current.clear();
+    stack.clear();
+
+    finished = false;
+    lastStatus = Status::Ok;
+    lastResultsSize = 0;
+
+    if (originalInput.empty()) {
+        finished = true;
+        lastStatus = Status::EmptyInput;
+        return;
+    }
+
+    for (int pc = 0; pc < 12; ++pc) remainingCounts[pc] = 0;
+    for (int midi : originalInput) remainingCounts[pc12(midi)]++;
+
+    totalNotes = (int32_t)originalInput.size();
+
+    Frame root{};
+    root.prevMidi = 20;
+    root.chosenPc = -1;
+    for (int pc = 0; pc < 12; ++pc) root.idx[pc] = 0;
+
+    stack.push_back(root);
+}
+
+void VoicingGenerator::beginForSpan(int16_t span) {
+    targetSpan = span;
     knownStructures.reset();
 
     current.clear();
@@ -89,6 +117,12 @@ bool VoicingGenerator::pickNextCandidate(Frame& f, int8_t& outPc, int16_t& outMi
     int bestMidi = 1000000000;
     int bestPc = -1;
 
+    int maxAllowed = 108;
+    if (targetSpan >= 0 && !current.empty()) {
+        maxAllowed = (int)current.front() + (int)targetSpan;
+        if (maxAllowed > 108) maxAllowed = 108;
+    }
+
     for (int pc = 0; pc < 12; ++pc) {
         if (remainingCounts[pc] <= 0) continue;
 
@@ -101,6 +135,10 @@ bool VoicingGenerator::pickNextCandidate(Frame& f, int8_t& outPc, int16_t& outMi
         if (i >= (uint8_t)vec.size()) continue;
 
         int m = (int)vec[i];
+
+        // NEW: span pruning
+        if (m > maxAllowed) continue;
+
         if (m < bestMidi) {
             bestMidi = m;
             bestPc = pc;
@@ -109,7 +147,6 @@ bool VoicingGenerator::pickNextCandidate(Frame& f, int8_t& outPc, int16_t& outMi
 
     if (bestPc < 0) return false;
 
-    // Consume this candidate at this depth
     f.idx[bestPc]++;
 
     outPc = (int8_t)bestPc;
@@ -199,6 +236,12 @@ void VoicingGenerator::popFrame() {
 }
 
 bool VoicingGenerator::emitCurrent() {
+
+    if (targetSpan >= 0) {
+        int span = (int)current.back() - (int)current.front();
+        if (span != (int)targetSpan) return false;
+    }
+
     uint64_t key = structureKey(current);
 
     // Exact dedupe, lower memory than std::unordered_set in wasm

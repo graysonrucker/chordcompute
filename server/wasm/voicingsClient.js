@@ -20,21 +20,45 @@ async function getModule() {
 /**
  * Create a batch generator. Caller must call gen.close() when done.
  *
- * Usage:
- *   const gen = await createGenerator(inputNotes, { capInts: 262144 });
- *   for (;;) {
- *     const { status, chunk } = gen.next(); // chunk is Int32Array view copy
- *     if (status !== 0) throw ...
- *     if (!chunk) break; // done
- *     ...process chunk...
+ * Supports span-by-span generation if wasm exports:
+ *   vg_create_no_begin, vg_begin_span
+ *
+ * Usage (single-span):
+ *   const gen = await createGenerator(inputNotes, { capInts: 2_097_152, span: 12 });
+ *   for (;;) { const {status, chunk} = gen.next(); ... }
+ *   gen.close();
+ *
+ * Usage (loop spans efficiently):
+ *   const gen = await createGenerator(inputNotes, { capInts: 2_097_152 });
+ *   for (let span = 0; span <= 87; ++span) {
+ *     gen.beginSpan(span);
+ *     for (;;) { ... gen.next() ... }
  *   }
  *   gen.close();
  */
 async function createGenerator(inputNotes, opts = {}) {
   const Module = await getModule();
 
+  // New exports (span-by-span)
+  const vg_create_no_begin = Module.cwrap("vg_create_no_begin", "number", [
+    "number",
+    "number",
+    "number",
+  ]);
+  const vg_begin_span = Module.cwrap("vg_begin_span", "number", [
+    "number",
+    "number",
+    "number",
+  ]);
+
+  // Old exports (backward compatible)
   const vg_create = Module.cwrap("vg_create", "number", ["number", "number", "number"]);
-  const vg_next_batch = Module.cwrap("vg_next_batch", "number", ["number", "number", "number", "number"]);
+  const vg_next_batch = Module.cwrap("vg_next_batch", "number", [
+    "number",
+    "number",
+    "number",
+    "number",
+  ]);
   const vg_destroy = Module.cwrap("vg_destroy", null, ["number"]);
 
   const notes = Int32Array.from(inputNotes);
@@ -45,26 +69,69 @@ async function createGenerator(inputNotes, opts = {}) {
 
   const statusPtr = Module._malloc(4);
 
+  // Output buffer (reused each batch)
+  const capInts = opts.capInts ?? 262144; // int32 count
+  const outPtr = Module._malloc(capInts * 4);
+
   // Create generator handle
-  const handle = vg_create(inPtr, notes.length, statusPtr);
-  const createStatus = Module.HEAP32[statusPtr >> 2];
+  // If span mode is desired (opts.span provided) OR caller might call beginSpan later,
+  // use vg_create_no_begin so we can begin per span.
+  const wantsSpan =
+    Number.isFinite(opts.span) || opts.enableSpanMode === true;
+
+  let handle = 0;
+  let createStatus = 0;
+
+  if (wantsSpan) {
+    handle = vg_create_no_begin(inPtr, notes.length, statusPtr);
+    createStatus = Module.HEAP32[statusPtr >> 2];
+  } else {
+    handle = vg_create(inPtr, notes.length, statusPtr);
+    createStatus = Module.HEAP32[statusPtr >> 2];
+  }
 
   // Input buffer no longer needed after create
   Module._free(inPtr);
 
   if (!handle || createStatus !== 0) {
+    Module._free(outPtr);
     Module._free(statusPtr);
     return {
       next: () => ({ status: createStatus || -1, chunk: null }),
+      beginSpan: () => {},
       close: () => {},
     };
   }
 
-  // Output buffer (reused each batch)
-  const capInts = opts.capInts ?? 262144; // ~1MB of int32 (4 bytes each)
-  const outPtr = Module._malloc(capInts * 4);
-
   let closed = false;
+
+  function beginSpan(span) {
+    if (closed) return -1;
+    if (!Number.isFinite(span) || span < 0 || span > 87) {
+      // bad args
+      return -1;
+    }
+
+    const rc = vg_begin_span(handle, span | 0, statusPtr);
+    const st = Module.HEAP32[statusPtr >> 2];
+
+    // rc < 0 is error; st holds generator status enum
+    if (rc < 0 || st !== 0) return st || -1;
+    return 0;
+  }
+
+  // If opts.span is provided, begin immediately
+  if (Number.isFinite(opts.span)) {
+    const st = beginSpan(opts.span);
+    if (st !== 0) {
+      // fail fast, but keep a close() that releases resources
+      return {
+        next: () => ({ status: st || -1, chunk: null }),
+        beginSpan,
+        close,
+      };
+    }
+  }
 
   function next() {
     if (closed) return { status: -1, chunk: null };
@@ -73,17 +140,15 @@ async function createGenerator(inputNotes, opts = {}) {
     const st = Module.HEAP32[statusPtr >> 2];
 
     if (written < 0) {
-      // error
       return { status: st || -1, chunk: null };
     }
 
     if (written === 0) {
-      // done
+      // done for this run/span
       return { status: 0, chunk: null };
     }
 
     // Copy the batch out of WASM memory.
-    // IMPORTANT: must copy because WASM memory will be reused next call.
     const start = outPtr >> 2;
     const chunk = Module.HEAP32.slice(start, start + written);
     return { status: 0, chunk };
@@ -98,7 +163,7 @@ async function createGenerator(inputNotes, opts = {}) {
     Module._free(statusPtr);
   }
 
-  return { next, close };
+  return { next, beginSpan, close };
 }
 
 module.exports = { createGenerator };

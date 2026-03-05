@@ -3,6 +3,7 @@ const { parentPort, workerData } = require("worker_threads");
 const fs = require("fs");
 const path = require("path");
 const { pipeline } = require("stream/promises");
+const { finished } = require("stream/promises");
 
 // IMPORTANT: this module must be importable inside a worker.
 const { createGenerator } = require("../wasm/voicingsClient");
@@ -11,83 +12,23 @@ function writeMeta(metaPath, meta) {
   fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 }
 
-function spanOfNotes(notesInt32) {
-  // notesInt32 is a view containing ONLY notes (no len), strictly increasing
-  const first = notesInt32[0];
-  const last = notesInt32[notesInt32.length - 1];
-  return last - first;
-}
-
-function onceDrain(s) {
-  return new Promise((resolve, reject) => {
-    s.once("drain", resolve);
-    s.once("error", reject);
-  });
-}
-
 (async () => {
   const { jobId, inputNotes, n, jobDir, dataPath, metaPath } = workerData;
 
   const createdAt = Date.now();
 
-  // bucket by span while generating, then concatenate buckets into dataPath
+  // One bucket file per span, then concatenate into dataPath.
   const bucketsDir = path.join(jobDir, "spanBuckets");
   fs.mkdirSync(bucketsDir, { recursive: true });
 
-  // Keep counts by span so we can track progress and debug distribution.
   const countBySpan = new Array(88).fill(0);
-
-  // Limit simultaneously-open file handles
-  const MAX_OPEN = 16;
-  const streams = new Map(); // span -> WriteStream (LRU)
 
   function getBucketPath(span) {
     return path.join(bucketsDir, `${String(span).padStart(2, "0")}.bin`);
   }
 
-  function getStream(span) {
-    let s = streams.get(span);
-    if (s) {
-      // refresh LRU
-      streams.delete(span);
-      streams.set(span, s);
-      return s;
-    }
-
-    // evict oldest
-    if (streams.size >= MAX_OPEN) {
-      const [evictSpan, evictStream] = streams.entries().next().value;
-      streams.delete(evictSpan);
-      evictStream.end();
-    }
-
-    const p = getBucketPath(span);
-    // Larger writable HWM helps throughput and reduces drain frequency
-    s = fs.createWriteStream(p, { flags: "a", highWaterMark: 1 << 20 }); // 1MB
-    streams.set(span, s);
-    return s;
-  }
-
-  async function closeAllStreams() {
-    const arr = [...streams.values()];
-    streams.clear();
-    await Promise.all(
-      arr.map(
-        (s) =>
-          new Promise((resolve, reject) => {
-            s.end(resolve);
-            s.on("error", reject);
-          })
-      )
-    );
-  }
-
   async function concatBucketsToSingleFile() {
-    // Concatenate span buckets in order into the final dataPath.
-    // data.bin format: fixed-size records of n int32 notes (NO len prefix),
-    // already sorted by span globally via concatenation order.
     fs.mkdirSync(path.dirname(dataPath), { recursive: true });
-
     const out = fs.createWriteStream(dataPath, { flags: "w" });
 
     try {
@@ -95,7 +36,6 @@ function onceDrain(s) {
         const p = getBucketPath(span);
         if (!fs.existsSync(p)) continue;
 
-        // Stream-copy bucket -> out without closing out.
         await pipeline(fs.createReadStream(p), out, { end: false });
       }
     } finally {
@@ -106,60 +46,41 @@ function onceDrain(s) {
     }
   }
 
-  // -----------------------------
-  // Backpressure-safe batching
-  // -----------------------------
-  const BYTES_PER_RECORD = 4 * n; // n int32 notes, no len prefix
-  const RECORDS_PER_FLUSH = 8192; // tune: 8192 records ~= n*4*8192 bytes
-  const FLUSH_BYTES = BYTES_PER_RECORD * RECORDS_PER_FLUSH; // e.g. n=8 => 262,144 bytes
+  const BYTES_PER_RECORD = 4 * n; // n int32 notes (no len prefix on disk)
+  const RECORDS_PER_FLUSH = 8192;
+  const FLUSH_BYTES = BYTES_PER_RECORD * RECORDS_PER_FLUSH;
 
-  // One staging buffer per span, capped memory:
-  // 88 * FLUSH_BYTES (e.g. ~23MB for n=8) + stream internals
-  const pendingBufs = new Array(88);
-  const pendingOff = new Uint32Array(88);
-  for (let span = 0; span < 88; ++span) {
-    pendingBufs[span] = Buffer.allocUnsafe(FLUSH_BYTES);
-    pendingOff[span] = 0;
+  let pendingBuf = Buffer.allocUnsafe(FLUSH_BYTES);
+  let pendingOff = 0;
+
+  function resetPending() {
+    pendingOff = 0;
   }
 
-  async function flushSpan(span) {
-    const off = pendingOff[span];
-    if (off === 0) return;
-
-    const s = getStream(span);
-    const outBuf = pendingBufs[span].subarray(0, off);
-    pendingOff[span] = 0;
-
-    if (!s.write(outBuf)) {
-      await onceDrain(s);
-    }
-  }
-
-  function appendRecord(span, notesInt32) {
-    // Copy record bytes into the staging buffer immediately.
-    // This also prevents any "view into WASM memory" corruption.
+  function appendRecord(notesInt32) {
     const src = Buffer.from(
       notesInt32.buffer,
       notesInt32.byteOffset,
       notesInt32.byteLength
     );
 
-    let off = pendingOff[span];
-    if (off + src.length > pendingBufs[span].length) {
-      return false; // caller must flush then retry
-    }
-    src.copy(pendingBufs[span], off);
-    pendingOff[span] = off + src.length;
+    if (pendingOff + src.length > pendingBuf.length) return false;
+    src.copy(pendingBuf, pendingOff);
+    pendingOff += src.length;
     return true;
   }
 
-  async function flushAllPending() {
-    // Flush spans that have any buffered bytes.
-    // We do it sequentially to avoid too many concurrent drains.
-    for (let span = 0; span <= 87; ++span) {
-      if (pendingOff[span] !== 0) {
-        await flushSpan(span);
-      }
+  async function flushPendingToStream(stream) {
+    if (pendingOff === 0) return;
+
+    const outBuf = pendingBuf.subarray(0, pendingOff);
+    pendingOff = 0;
+
+    if (!stream.write(outBuf)) {
+      await new Promise((resolve, reject) => {
+        stream.once("drain", resolve);
+        stream.once("error", reject);
+      });
     }
   }
 
@@ -175,94 +96,123 @@ function onceDrain(s) {
       createdAt,
     });
 
-    // Bigger batch buffer = fewer wasm->js crossings.
-    // capInts is number of int32 entries in each returned chunk.
-    // 2,097,152 ints = ~8MB.
-    const gen = await createGenerator(inputNotes, { capInts: 2_097_152 });
+    // Create generator in span mode (no begin yet). We'll call gen.beginSpan(span).
+    const gen = await createGenerator(inputNotes, {
+      capInts: 2_097_152,
+      enableSpanMode: true,
+    });
 
-    for (;;) {
-      const { status, chunk } = gen.next();
-
-      if (status !== 0) {
+    for (let span = 0; span <= 87; ++span) {
+      // Reset WASM generator for this span (clears knownStructures inside WASM)
+      const st = gen.beginSpan(span);
+      if (st !== 0) {
         gen.close();
-        throw new Error(`WASM nextBatch failed status=${status}`);
+        throw new Error(`WASM beginSpan(${span}) failed status=${st}`);
       }
 
-      if (!chunk) break; // done
+      // Open a single stream for this span; attach ONE error listener.
+      const p = getBucketPath(span);
+      const out = fs.createWriteStream(p, {
+        flags: "w",
+        highWaterMark: 1 << 20,
+      });
 
-      // Parse records: [len, note1, note2, ...]
-      for (let i = 0; i < chunk.length; ) {
-        const len = chunk[i++];
-        if (!Number.isFinite(len) || len <= 0) {
-          gen.close();
-          throw new Error(`Invalid record len=${len} at i=${i - 1}`);
-        }
-        if (len !== n) {
-          gen.close();
-          throw new Error(`Unexpected voicing length ${len} (expected ${n})`);
-        }
+      let streamError = null;
+      out.on("error", (e) => {
+        streamError = e;
+      });
 
-        const start = i;
-        const end = i + len;
-        if (end > chunk.length) {
-          gen.close();
-          throw new Error(
-            `Truncated record: need ${len} notes but only ${chunk.length - i} remain`
-          );
-        }
+      resetPending();
 
-        // Notes-only view (fixed record size n)
-        const notes = chunk.subarray(start, end);
+      for (;;) {
+        const { status, chunk } = gen.next();
 
-        // Compute span (0..87) and bucket it
-        const span = spanOfNotes(notes);
-        if (span < 0 || span > 87) {
+        if (status !== 0) {
+          out.end();
+          await finished(out).catch(() => {});
           gen.close();
-          throw new Error(`Span out of range: ${span}`);
+          throw new Error(`WASM nextBatch failed status=${status} (span=${span})`);
         }
 
-        // Append into per-span staging buffer; flush on overflow.
-        if (!appendRecord(span, notes)) {
-          await flushSpan(span);
-          // must fit now
-          if (!appendRecord(span, notes)) {
+        if (!chunk) break; // done with this span
+
+        // Parse records: [len, note1..noteN] repeated (len should always be n)
+        for (let i = 0; i < chunk.length; ) {
+          const len = chunk[i++];
+          if (len !== n) {
+            out.end();
+            await finished(out).catch(() => {});
             gen.close();
             throw new Error(
-              `Record too large for staging buffer (span=${span}, bytes=${notes.byteLength})`
+              `Unexpected voicing length ${len} (expected ${n}) span=${span}`
             );
           }
+
+          const start = i;
+          const end = i + len;
+          if (end > chunk.length) {
+            out.end();
+            await finished(out).catch(() => {});
+            gen.close();
+            throw new Error(`Truncated record in chunk span=${span}`);
+          }
+
+          const notes = chunk.subarray(start, end);
+
+          // Append notes-only record (fixed n int32) to the current span file
+          if (!appendRecord(notes)) {
+            await flushPendingToStream(out);
+            if (!appendRecord(notes)) {
+              out.end();
+              await finished(out).catch(() => {});
+              gen.close();
+              throw new Error(
+                `Record too large for staging buffer bytes=${notes.byteLength}`
+              );
+            }
+          }
+
+          countBySpan[span]++;
+          totalCount++;
+
+          i = end;
+
+          // progress + periodic flush
+          if ((totalCount & 8191) === 0) {
+            await flushPendingToStream(out);
+
+            writeMeta(metaPath, {
+              jobId,
+              state: "running",
+              n,
+              count: totalCount,
+              countBySpan,
+              createdAt,
+            });
+            parentPort.postMessage({ type: "progress", count: totalCount });
+          }
+
+          if (streamError) {
+            out.end();
+            await finished(out).catch(() => {});
+            gen.close();
+            throw streamError;
+          }
         }
+      }
 
-        countBySpan[span]++;
-        totalCount++;
+      // Flush remaining staged bytes for this span and close the stream
+      await flushPendingToStream(out);
+      out.end();
+      await finished(out);
 
-        i = end;
-
-        // progress + periodic flush to keep buffers bounded even if one span dominates
-        if ((totalCount & 8191) === 0) {
-          // flush any spans that have accumulated a lot (cheap because most are empty)
-          await flushAllPending();
-
-          writeMeta(metaPath, {
-            jobId,
-            state: "running",
-            n,
-            count: totalCount,
-            countBySpan,
-            createdAt,
-          });
-          parentPort.postMessage({ type: "progress", count: totalCount });
-        }
+      if (streamError) {
+        gen.close();
+        throw streamError;
       }
     }
 
     gen.close();
-
-    // Flush remaining staged bytes to disk
-    await flushAllPending();
-
-    // Ensure all bucket streams are flushed to disk
-    await closeAllStreams();
 
     // Combine buckets into the single data file your existing pagination expects
     await concatBucketsToSingleFile();
