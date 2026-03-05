@@ -94,6 +94,7 @@ function writeMeta(metaPath, meta) {
           state: "running",
           n,
           count: totalCountRef.value,
+          available: availableRef.value,
           countBySpan: countBySpan ?? [],
           createdAt,
         });
@@ -109,7 +110,56 @@ function writeMeta(metaPath, meta) {
   }
 
   const totalCountRef = { value: 0 };
+  // Tracks voicings safely committed to data.bin (span mode only — advances
+  // once per completed span; stays 0 for standard mode until job is done).
+  const availableRef = { value: 0 };
+  // Both modes now populate countBySpan
   let countBySpan = null;
+
+  // ---- Shared bucket helpers (used by both modes) -------------------------
+
+  const bucketsDir = path.join(jobDir, "spanBuckets");
+
+  function getBucketPath(span) {
+    return path.join(bucketsDir, `${String(span).padStart(2, "0")}.bin`);
+  }
+
+  async function concatBucketsToSingleFile() {
+    fs.mkdirSync(path.dirname(dataPath), { recursive: true });
+    const out = fs.createWriteStream(dataPath, { flags: "w" });
+    try {
+      for (let span = 0; span <= 87; ++span) {
+        const p = getBucketPath(span);
+        if (!fs.existsSync(p)) continue;
+        await pipeline(fs.createReadStream(p), out, { end: false });
+      }
+    } finally {
+      await new Promise((resolve, reject) => {
+        out.end(resolve);
+        out.on("error", reject);
+      });
+    }
+  }
+
+  function writeSpanManifest() {
+    fs.writeFileSync(
+      path.join(jobDir, "spanBuckets.json"),
+      JSON.stringify(
+        {
+          jobId,
+          n,
+          count: totalCountRef.value,
+          countBySpan,
+          createdAt,
+          dataPath: path.relative(jobDir, dataPath),
+        },
+        null,
+        2
+      )
+    );
+  }
+
+  // -------------------------------------------------------------------------
 
   try {
     if (mode === "span") {
@@ -123,6 +173,7 @@ function writeMeta(metaPath, meta) {
       state: "done",
       n,
       count: totalCountRef.value,
+      available: totalCountRef.value,
       countBySpan: countBySpan ?? [],
       createdAt,
     });
@@ -144,97 +195,168 @@ function writeMeta(metaPath, meta) {
     parentPort.postMessage({ type: "error", error });
   }
 
-  // Standard mode: single-pass, write directly to dataPath.
-  // Used for inputs where the estimate is below the span-mode threshold.
+  // Standard mode: single-pass, bucket voicings by span on the fly, then
+  // concatenate buckets into a span-sorted dataPath — same final layout as
+  // span mode but without the 88-pass overhead.
 
   async function runStandardMode() {
+    countBySpan = new Array(88).fill(0);
+
+    fs.mkdirSync(bucketsDir, { recursive: true });
+
     writeMeta(metaPath, {
       jobId,
       state: "running",
       n,
       count: 0,
-      countBySpan: [],
+      countBySpan,
       createdAt,
     });
 
-    fs.mkdirSync(path.dirname(dataPath), { recursive: true });
+    // Per-span staging buffers (one per span, allocated lazily via offset guard)
+    const spanPendingBufs = Array.from({ length: 88 }, () =>
+      Buffer.allocUnsafe(FLUSH_BYTES)
+    );
+    const spanPendingOffs = new Int32Array(88); // all zero
+    const spanStreams = new Array(88).fill(null);
+    let anyStreamError = null;
 
-    const out = fs.createWriteStream(dataPath, {
-      flags: "w",
-      highWaterMark: 1 << 20,
-    });
+    function getOrOpenSpanStream(span) {
+      if (!spanStreams[span]) {
+        const ws = fs.createWriteStream(getBucketPath(span), {
+          flags: "w",
+          highWaterMark: 1 << 20,
+        });
+        ws.on("error", (e) => {
+          if (!anyStreamError) anyStreamError = e;
+        });
+        spanStreams[span] = ws;
+      }
+      return spanStreams[span];
+    }
 
-    const streamErrorRef = { value: null };
-    out.on("error", (e) => { streamErrorRef.value = e; });
+    async function flushSpanBuffer(span) {
+      if (spanPendingOffs[span] === 0) return;
+      const stream = getOrOpenSpanStream(span);
+      const outBuf = spanPendingBufs[span].subarray(0, spanPendingOffs[span]);
+      spanPendingOffs[span] = 0;
+      if (!stream.write(Buffer.from(outBuf))) {
+        await new Promise((resolve, reject) => {
+          stream.once("drain", resolve);
+          stream.once("error", reject);
+        });
+      }
+      if (anyStreamError) throw anyStreamError;
+    }
 
-    resetPending();
+    // Drain a WASM chunk, routing each voicing to its span bucket.
+    async function drainChunkToSpanBuckets(chunk) {
+      for (let i = 0; i < chunk.length; ) {
+        const len = chunk[i++];
+        if (len !== n) {
+          throw new Error(
+            `Unexpected voicing length ${len} (expected ${n})`
+          );
+        }
+
+        const start = i;
+        const end = i + len;
+        if (end > chunk.length) {
+          throw new Error(`Truncated record in chunk`);
+        }
+
+        // chunk is Int32Array from WASM; notes are sorted ascending
+        const span = chunk[end - 1] - chunk[start];
+
+        if (spanPendingOffs[span] + n > spanPendingBufs[span].length) {
+          await flushSpanBuffer(span);
+        }
+
+        // Narrow int32 → uint8 (MIDI 21-108 fits in one byte)
+        for (let j = 0; j < n; j++) {
+          spanPendingBufs[span][spanPendingOffs[span]++] = chunk[start + j];
+        }
+
+        countBySpan[span]++;
+        totalCountRef.value++;
+        i = end;
+
+        if ((totalCountRef.value & 8191) === 0) {
+          await flushSpanBuffer(span);
+          if (anyStreamError) throw anyStreamError;
+          writeMeta(metaPath, {
+            jobId,
+            state: "running",
+            n,
+            count: totalCountRef.value,
+            countBySpan,
+            createdAt,
+          });
+          parentPort.postMessage({ type: "progress", count: totalCountRef.value });
+        }
+      }
+    }
 
     const gen = await createGenerator(inputNotes, {
       capInts: 2_097_152,
       enableSpanMode: false,
     });
 
-    for (;;) {
-      const { status, chunk } = gen.next();
+    try {
+      for (;;) {
+        const { status, chunk } = gen.next();
 
-      if (status !== 0) {
-        out.end();
-        await finished(out).catch(() => {});
-        gen.close();
-        throw new Error(`WASM nextBatch failed status=${status}`);
+        if (status !== 0) {
+          throw new Error(`WASM nextBatch failed status=${status}`);
+        }
+
+        if (!chunk) break;
+
+        await drainChunkToSpanBuckets(chunk);
       }
-
-      if (!chunk) break;
-
-      await drainChunk(chunk, out, null, -1, totalCountRef, streamErrorRef);
+    } finally {
+      gen.close();
     }
 
-    gen.close();
+    // Flush all remaining per-span buffers
+    for (let span = 0; span <= 87; span++) {
+      await flushSpanBuffer(span);
+    }
 
-    await flushPendingToStream(out);
-    out.end();
-    await finished(out);
+    if (anyStreamError) throw anyStreamError;
 
-    if (streamErrorRef.value) throw streamErrorRef.value;
+    // Close all open bucket streams
+    await Promise.all(
+      spanStreams.map((ws) => {
+        if (!ws) return Promise.resolve();
+        ws.end();
+        return finished(ws).catch(() => {});
+      })
+    );
+
+    if (anyStreamError) throw anyStreamError;
+
+    await concatBucketsToSingleFile();
+    writeSpanManifest();
   }
 
 
-  // Span mode: 88 passes, one per span, with per-span bucket files that are
-  // concatenated at the end to produce a globally span-sorted dataPath.
-  // Used for large inputs where a single-pass hash set would OOM.
+  // Span mode: 88 passes, one per span. Each completed span's bucket is
+  // immediately appended to data.bin so the page endpoint can serve results
+  // while the job is still running. No final concat step needed.
 
   async function runSpanMode() {
     countBySpan = new Array(88).fill(0);
 
-    const bucketsDir = path.join(jobDir, "spanBuckets");
     fs.mkdirSync(bucketsDir, { recursive: true });
-
-    function getBucketPath(span) {
-      return path.join(bucketsDir, `${String(span).padStart(2, "0")}.bin`);
-    }
-
-    async function concatBucketsToSingleFile() {
-      fs.mkdirSync(path.dirname(dataPath), { recursive: true });
-      const out = fs.createWriteStream(dataPath, { flags: "w" });
-      try {
-        for (let span = 0; span <= 87; ++span) {
-          const p = getBucketPath(span);
-          if (!fs.existsSync(p)) continue;
-          await pipeline(fs.createReadStream(p), out, { end: false });
-        }
-      } finally {
-        await new Promise((resolve, reject) => {
-          out.end(resolve);
-          out.on("error", reject);
-        });
-      }
-    }
+    fs.mkdirSync(path.dirname(dataPath), { recursive: true });
 
     writeMeta(metaPath, {
       jobId,
       state: "running",
       n,
       count: 0,
+      available: 0,
       countBySpan,
       createdAt,
     });
@@ -285,28 +407,37 @@ function writeMeta(metaPath, meta) {
         gen.close();
         throw streamErrorRef.value;
       }
+
+      // Append this span's bucket to data.bin immediately so pages are
+      // readable as each span completes.
+      if (countBySpan[span] > 0) {
+        await pipeline(
+          fs.createReadStream(p),
+          fs.createWriteStream(dataPath, { flags: "a" })
+        );
+      }
+
+      availableRef.value = totalCountRef.value;
+
+      writeMeta(metaPath, {
+        jobId,
+        state: "running",
+        n,
+        count: totalCountRef.value,
+        available: availableRef.value,
+        countBySpan,
+        createdAt,
+      });
+
+      parentPort.postMessage({
+        type: "spanComplete",
+        span,
+        available: availableRef.value,
+      });
     }
 
     gen.close();
-
-    await concatBucketsToSingleFile();
-
-    const manifestPath = path.join(jobDir, "spanBuckets.json");
-    fs.writeFileSync(
-      manifestPath,
-      JSON.stringify(
-        {
-          jobId,
-          n,
-          count: totalCountRef.value,
-          countBySpan,
-          createdAt,
-          dataPath: path.relative(jobDir, dataPath),
-        },
-        null,
-        2
-      )
-    );
+    writeSpanManifest();
   }
 
 })();

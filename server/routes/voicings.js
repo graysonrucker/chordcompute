@@ -41,6 +41,7 @@ function getJobOrMeta(req, jobId) {
       state: meta.state,
       n: meta.n,
       count: meta.count ?? 0,
+      available: meta.available ?? (meta.state === "done" ? (meta.count ?? 0) : 0),
       createdAt: meta.createdAt ?? null,
       error: meta.error ?? null,
       jobDir,
@@ -86,6 +87,7 @@ router.post("/jobs", (req, res) => {
     estimate,
     mode,
     count: 0,
+    available: 0,
     createdAt: Date.now(),
     error: null,
     jobDir,
@@ -129,8 +131,11 @@ router.post("/jobs", (req, res) => {
     if (msg.type === "progress") {
       job.count = msg.count ?? job.count;
       job.state = "running";
+    } else if (msg.type === "spanComplete") {
+      job.available = msg.available ?? job.available;
     } else if (msg.type === "done") {
       job.count = msg.count ?? job.count;
+      job.available = job.count; // everything is committed
       job.state = "done";
       job.worker = null;
     } else if (msg.type === "error") {
@@ -192,6 +197,7 @@ router.get("/jobs/:jobId/status", (req, res) => {
     estimate: job.estimate ?? null,
     mode: job.mode ?? null,
     count: job.count,
+    available: job.available ?? 0,
     error: job.error,
   });
 });
@@ -199,10 +205,12 @@ router.get("/jobs/:jobId/status", (req, res) => {
 /**
  * GET /api/voicings/jobs/:jobId/page?offset&limit
  *
- * data.bin is only valid after the job is DONE (span mode concatenates at end;
- * standard mode writes directly but also only marks done on completion).
+ * For span mode: pages are available as each span is committed to data.bin,
+ * even while the job is still running. `available` in the response reflects
+ * the last fully-committed count and is the safe read ceiling.
+ * For standard mode: paging is only available once the job is done.
  *
- * Returns: { jobId, n, offset, items:[{notes:number[]}] }
+ * Returns: { jobId, n, offset, available, state, items:[{notes:number[]}] }
  */
 router.get("/jobs/:jobId/page", (req, res) => {
   const jobId = req.params.jobId;
@@ -212,7 +220,15 @@ router.get("/jobs/:jobId/page", (req, res) => {
   if (job.state === "error") return res.status(409).json({ error: "Job failed", detail: job.error });
   if (job.state === "canceled") return res.status(410).json({ error: "Job was canceled" });
 
-  if (job.state !== "done") {
+  // For span mode, pages are available as each span is committed — even while
+  // the job is still running. Standard mode gates on done as before.
+  const available = job.state === "done"
+    ? Math.max(0, job.count || 0)
+    : Math.max(0, job.available || 0);
+
+  const isReadable = job.state === "done" || (job.mode === "span" && available > 0);
+
+  if (!isReadable) {
     return res.json({
       jobId,
       n: job.n,
@@ -226,8 +242,6 @@ router.get("/jobs/:jobId/page", (req, res) => {
 
   const offset = Math.max(0, parseInt(req.query.offset || "0", 10));
   const limit = Math.max(1, Math.min(5000, parseInt(req.query.limit || "200", 10)));
-
-  const available = Math.max(0, job.count || 0);
   const start = offset;
   const end = Math.min(available, offset + limit);
 
