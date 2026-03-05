@@ -13,40 +13,12 @@ function writeMeta(metaPath, meta) {
 }
 
 (async () => {
-  const { jobId, inputNotes, n, jobDir, dataPath, metaPath } = workerData;
+  const { jobId, inputNotes, n, mode, jobDir, dataPath, metaPath } = workerData;
 
   const createdAt = Date.now();
 
-  // One bucket file per span, then concatenate into dataPath.
-  const bucketsDir = path.join(jobDir, "spanBuckets");
-  fs.mkdirSync(bucketsDir, { recursive: true });
-
-  const countBySpan = new Array(88).fill(0);
-
-  function getBucketPath(span) {
-    return path.join(bucketsDir, `${String(span).padStart(2, "0")}.bin`);
-  }
-
-  async function concatBucketsToSingleFile() {
-    fs.mkdirSync(path.dirname(dataPath), { recursive: true });
-    const out = fs.createWriteStream(dataPath, { flags: "w" });
-
-    try {
-      for (let span = 0; span <= 87; ++span) {
-        const p = getBucketPath(span);
-        if (!fs.existsSync(p)) continue;
-
-        await pipeline(fs.createReadStream(p), out, { end: false });
-      }
-    } finally {
-      await new Promise((resolve, reject) => {
-        out.end(resolve);
-        out.on("error", reject);
-      });
-    }
-  }
-
-  const BYTES_PER_RECORD = 4 * n; // n int32 notes (no len prefix on disk)
+  // --- Shared staging buffer (uint8 on disk; WASM output stays int32) ---
+  const BYTES_PER_RECORD = n; // n uint8 notes (MIDI 21-108 fits in one byte)
   const RECORDS_PER_FLUSH = 8192;
   const FLUSH_BYTES = BYTES_PER_RECORD * RECORDS_PER_FLUSH;
 
@@ -57,25 +29,20 @@ function writeMeta(metaPath, meta) {
     pendingOff = 0;
   }
 
+  // Compress int32 MIDI notes (21-108) down to uint8 on the way to disk.
+  // WASM output stays int32 — we only narrow at the write boundary.
   function appendRecord(notesInt32) {
-    const src = Buffer.from(
-      notesInt32.buffer,
-      notesInt32.byteOffset,
-      notesInt32.byteLength
-    );
-
-    if (pendingOff + src.length > pendingBuf.length) return false;
-    src.copy(pendingBuf, pendingOff);
-    pendingOff += src.length;
+    if (pendingOff + n > pendingBuf.length) return false;
+    for (let i = 0; i < n; i++) {
+      pendingBuf[pendingOff++] = notesInt32[i]; // safe: values are 21-108
+    }
     return true;
   }
 
   async function flushPendingToStream(stream) {
     if (pendingOff === 0) return;
-
     const outBuf = pendingBuf.subarray(0, pendingOff);
     pendingOff = 0;
-
     if (!stream.write(outBuf)) {
       await new Promise((resolve, reject) => {
         stream.once("drain", resolve);
@@ -84,167 +51,84 @@ function writeMeta(metaPath, meta) {
     }
   }
 
-  let totalCount = 0;
-
-  try {
-    writeMeta(metaPath, {
-      jobId,
-      state: "running",
-      n,
-      count: 0,
-      countBySpan,
-      createdAt,
-    });
-
-    // Create generator in span mode (no begin yet). We'll call gen.beginSpan(span).
-    const gen = await createGenerator(inputNotes, {
-      capInts: 2_097_152,
-      enableSpanMode: true,
-    });
-
-    for (let span = 0; span <= 87; ++span) {
-      // Reset WASM generator for this span (clears knownStructures inside WASM)
-      const st = gen.beginSpan(span);
-      if (st !== 0) {
-        gen.close();
-        throw new Error(`WASM beginSpan(${span}) failed status=${st}`);
+  // Parse a WASM chunk and write records to `out` stream.
+  // Updates totalCount and countBySpan[currentSpan] in place.
+  // Returns true if a stream error occurred.
+  async function drainChunk(chunk, out, countBySpan, currentSpan, totalCountRef, streamErrorRef) {
+    for (let i = 0; i < chunk.length; ) {
+      const len = chunk[i++];
+      if (len !== n) {
+        out.end();
+        await finished(out).catch(() => {});
+        throw new Error(`Unexpected voicing length ${len} (expected ${n}) span=${currentSpan}`);
       }
 
-      // Open a single stream for this span; attach ONE error listener.
-      const p = getBucketPath(span);
-      const out = fs.createWriteStream(p, {
-        flags: "w",
-        highWaterMark: 1 << 20,
-      });
+      const start = i;
+      const end = i + len;
+      if (end > chunk.length) {
+        out.end();
+        await finished(out).catch(() => {});
+        throw new Error(`Truncated record in chunk span=${currentSpan}`);
+      }
 
-      let streamError = null;
-      out.on("error", (e) => {
-        streamError = e;
-      });
+      const notes = chunk.subarray(start, end);
 
-      resetPending();
-
-      for (;;) {
-        const { status, chunk } = gen.next();
-
-        if (status !== 0) {
+      if (!appendRecord(notes)) {
+        await flushPendingToStream(out);
+        if (!appendRecord(notes)) {
           out.end();
           await finished(out).catch(() => {});
-          gen.close();
-          throw new Error(`WASM nextBatch failed status=${status} (span=${span})`);
-        }
-
-        if (!chunk) break; // done with this span
-
-        // Parse records: [len, note1..noteN] repeated (len should always be n)
-        for (let i = 0; i < chunk.length; ) {
-          const len = chunk[i++];
-          if (len !== n) {
-            out.end();
-            await finished(out).catch(() => {});
-            gen.close();
-            throw new Error(
-              `Unexpected voicing length ${len} (expected ${n}) span=${span}`
-            );
-          }
-
-          const start = i;
-          const end = i + len;
-          if (end > chunk.length) {
-            out.end();
-            await finished(out).catch(() => {});
-            gen.close();
-            throw new Error(`Truncated record in chunk span=${span}`);
-          }
-
-          const notes = chunk.subarray(start, end);
-
-          // Append notes-only record (fixed n int32) to the current span file
-          if (!appendRecord(notes)) {
-            await flushPendingToStream(out);
-            if (!appendRecord(notes)) {
-              out.end();
-              await finished(out).catch(() => {});
-              gen.close();
-              throw new Error(
-                `Record too large for staging buffer bytes=${notes.byteLength}`
-              );
-            }
-          }
-
-          countBySpan[span]++;
-          totalCount++;
-
-          i = end;
-
-          // progress + periodic flush
-          if ((totalCount & 8191) === 0) {
-            await flushPendingToStream(out);
-
-            writeMeta(metaPath, {
-              jobId,
-              state: "running",
-              n,
-              count: totalCount,
-              countBySpan,
-              createdAt,
-            });
-            parentPort.postMessage({ type: "progress", count: totalCount });
-          }
-
-          if (streamError) {
-            out.end();
-            await finished(out).catch(() => {});
-            gen.close();
-            throw streamError;
-          }
+          throw new Error(`Record too large for staging buffer bytes=${notes.byteLength}`);
         }
       }
 
-      // Flush remaining staged bytes for this span and close the stream
-      await flushPendingToStream(out);
-      out.end();
-      await finished(out);
+      if (countBySpan !== null) countBySpan[currentSpan]++;
+      totalCountRef.value++;
 
-      if (streamError) {
-        gen.close();
-        throw streamError;
+      i = end;
+
+      if ((totalCountRef.value & 8191) === 0) {
+        await flushPendingToStream(out);
+        writeMeta(metaPath, {
+          jobId,
+          state: "running",
+          n,
+          count: totalCountRef.value,
+          countBySpan: countBySpan ?? [],
+          createdAt,
+        });
+        parentPort.postMessage({ type: "progress", count: totalCountRef.value });
+      }
+
+      if (streamErrorRef.value) {
+        out.end();
+        await finished(out).catch(() => {});
+        throw streamErrorRef.value;
       }
     }
+  }
 
-    gen.close();
+  const totalCountRef = { value: 0 };
+  let countBySpan = null;
 
-    // Combine buckets into the single data file your existing pagination expects
-    await concatBucketsToSingleFile();
-
-    // Write a manifest (optional but helpful)
-    const manifestPath = path.join(jobDir, "spanBuckets.json");
-    fs.writeFileSync(
-      manifestPath,
-      JSON.stringify(
-        {
-          jobId,
-          n,
-          count: totalCount,
-          countBySpan,
-          createdAt,
-          dataPath: path.relative(jobDir, dataPath),
-        },
-        null,
-        2
-      )
-    );
+  try {
+    if (mode === "span") {
+      await runSpanMode();
+    } else {
+      await runStandardMode();
+    }
 
     writeMeta(metaPath, {
       jobId,
       state: "done",
       n,
-      count: totalCount,
-      countBySpan,
+      count: totalCountRef.value,
+      countBySpan: countBySpan ?? [],
       createdAt,
     });
 
-    parentPort.postMessage({ type: "done", count: totalCount });
+    parentPort.postMessage({ type: "done", count: totalCountRef.value });
+
   } catch (err) {
     const error = err?.message || String(err);
     try {
@@ -259,4 +143,170 @@ function writeMeta(metaPath, meta) {
     } catch {}
     parentPort.postMessage({ type: "error", error });
   }
+
+  // Standard mode: single-pass, write directly to dataPath.
+  // Used for inputs where the estimate is below the span-mode threshold.
+
+  async function runStandardMode() {
+    writeMeta(metaPath, {
+      jobId,
+      state: "running",
+      n,
+      count: 0,
+      countBySpan: [],
+      createdAt,
+    });
+
+    fs.mkdirSync(path.dirname(dataPath), { recursive: true });
+
+    const out = fs.createWriteStream(dataPath, {
+      flags: "w",
+      highWaterMark: 1 << 20,
+    });
+
+    const streamErrorRef = { value: null };
+    out.on("error", (e) => { streamErrorRef.value = e; });
+
+    resetPending();
+
+    const gen = await createGenerator(inputNotes, {
+      capInts: 2_097_152,
+      enableSpanMode: false,
+    });
+
+    for (;;) {
+      const { status, chunk } = gen.next();
+
+      if (status !== 0) {
+        out.end();
+        await finished(out).catch(() => {});
+        gen.close();
+        throw new Error(`WASM nextBatch failed status=${status}`);
+      }
+
+      if (!chunk) break;
+
+      await drainChunk(chunk, out, null, -1, totalCountRef, streamErrorRef);
+    }
+
+    gen.close();
+
+    await flushPendingToStream(out);
+    out.end();
+    await finished(out);
+
+    if (streamErrorRef.value) throw streamErrorRef.value;
+  }
+
+
+  // Span mode: 88 passes, one per span, with per-span bucket files that are
+  // concatenated at the end to produce a globally span-sorted dataPath.
+  // Used for large inputs where a single-pass hash set would OOM.
+
+  async function runSpanMode() {
+    countBySpan = new Array(88).fill(0);
+
+    const bucketsDir = path.join(jobDir, "spanBuckets");
+    fs.mkdirSync(bucketsDir, { recursive: true });
+
+    function getBucketPath(span) {
+      return path.join(bucketsDir, `${String(span).padStart(2, "0")}.bin`);
+    }
+
+    async function concatBucketsToSingleFile() {
+      fs.mkdirSync(path.dirname(dataPath), { recursive: true });
+      const out = fs.createWriteStream(dataPath, { flags: "w" });
+      try {
+        for (let span = 0; span <= 87; ++span) {
+          const p = getBucketPath(span);
+          if (!fs.existsSync(p)) continue;
+          await pipeline(fs.createReadStream(p), out, { end: false });
+        }
+      } finally {
+        await new Promise((resolve, reject) => {
+          out.end(resolve);
+          out.on("error", reject);
+        });
+      }
+    }
+
+    writeMeta(metaPath, {
+      jobId,
+      state: "running",
+      n,
+      count: 0,
+      countBySpan,
+      createdAt,
+    });
+
+    const gen = await createGenerator(inputNotes, {
+      capInts: 2_097_152,
+      enableSpanMode: true,
+    });
+
+    for (let span = 0; span <= 87; ++span) {
+      const st = gen.beginSpan(span);
+      if (st !== 0) {
+        gen.close();
+        throw new Error(`WASM beginSpan(${span}) failed status=${st}`);
+      }
+
+      const p = getBucketPath(span);
+      const out = fs.createWriteStream(p, {
+        flags: "w",
+        highWaterMark: 1 << 20,
+      });
+
+      const streamErrorRef = { value: null };
+      out.on("error", (e) => { streamErrorRef.value = e; });
+
+      resetPending();
+
+      for (;;) {
+        const { status, chunk } = gen.next();
+
+        if (status !== 0) {
+          out.end();
+          await finished(out).catch(() => {});
+          gen.close();
+          throw new Error(`WASM nextBatch failed status=${status} (span=${span})`);
+        }
+
+        if (!chunk) break;
+
+        await drainChunk(chunk, out, countBySpan, span, totalCountRef, streamErrorRef);
+      }
+
+      await flushPendingToStream(out);
+      out.end();
+      await finished(out);
+
+      if (streamErrorRef.value) {
+        gen.close();
+        throw streamErrorRef.value;
+      }
+    }
+
+    gen.close();
+
+    await concatBucketsToSingleFile();
+
+    const manifestPath = path.join(jobDir, "spanBuckets.json");
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify(
+        {
+          jobId,
+          n,
+          count: totalCountRef.value,
+          countBySpan,
+          createdAt,
+          dataPath: path.relative(jobDir, dataPath),
+        },
+        null,
+        2
+      )
+    );
+  }
+
 })();

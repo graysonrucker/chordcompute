@@ -3,6 +3,7 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const { Worker } = require("worker_threads");
+const { estimateVoicings, generationMode } = require("../lib/noteUtils");
 
 const router = express.Router();
 
@@ -59,7 +60,7 @@ function getJobOrMeta(req, jobId) {
 /**
  * POST /api/voicings/jobs
  * Body: { notes: number[] }
- * Returns immediately: { jobId }
+ * Returns immediately: { jobId, estimate, mode }
  */
 router.post("/jobs", (req, res) => {
   const inputNotes = req.body?.notes;
@@ -68,6 +69,9 @@ router.post("/jobs", (req, res) => {
   }
 
   const n = inputNotes.length;
+  const estimate = estimateVoicings(inputNotes);
+  const mode = generationMode(inputNotes);
+
   const jobId = newJobId();
   const jobDir = path.join(req.app.locals.JOBS_DIR, jobId);
   fs.mkdirSync(jobDir, { recursive: true });
@@ -77,9 +81,11 @@ router.post("/jobs", (req, res) => {
 
   const job = {
     jobId,
-    state: "running", // queued | running | done | error | canceled
+    state: "running",
     n,
-    count: 0, // number of voicings generated (not necessarily pageable until done)
+    estimate,
+    mode,
+    count: 0,
     createdAt: Date.now(),
     error: null,
     jobDir,
@@ -93,11 +99,13 @@ router.post("/jobs", (req, res) => {
     jobId,
     state: job.state,
     n: job.n,
+    estimate,
+    mode,
     count: job.count,
     createdAt: job.createdAt,
   });
 
-  res.json({ jobId });
+  res.json({ jobId, estimate, mode });
 
   const workerPath = path.join(__dirname, "../workers/voicingsWorker.js");
   const worker = new Worker(workerPath, {
@@ -105,6 +113,8 @@ router.post("/jobs", (req, res) => {
       jobId,
       inputNotes,
       n,
+      estimate,
+      mode,
       jobDir,
       dataPath,
       metaPath,
@@ -179,6 +189,8 @@ router.get("/jobs/:jobId/status", (req, res) => {
     jobId,
     state: job.state,
     n: job.n,
+    estimate: job.estimate ?? null,
+    mode: job.mode ?? null,
     count: job.count,
     error: job.error,
   });
@@ -187,9 +199,8 @@ router.get("/jobs/:jobId/status", (req, res) => {
 /**
  * GET /api/voicings/jobs/:jobId/page?offset&limit
  *
- * IMPORTANT CHANGE:
- * Because we now sort-by-span using span buckets and concatenate at the end,
- * `data.bin` is only valid after the job is DONE.
+ * data.bin is only valid after the job is DONE (span mode concatenates at end;
+ * standard mode writes directly but also only marks done on completion).
  *
  * Returns: { jobId, n, offset, items:[{notes:number[]}] }
  */
@@ -201,7 +212,6 @@ router.get("/jobs/:jobId/page", (req, res) => {
   if (job.state === "error") return res.status(409).json({ error: "Job failed", detail: job.error });
   if (job.state === "canceled") return res.status(410).json({ error: "Job was canceled" });
 
-  // NEW: only allow paging when done (data.bin is finalized then)
   if (job.state !== "done") {
     return res.json({
       jobId,
@@ -225,13 +235,12 @@ router.get("/jobs/:jobId/page", (req, res) => {
     return res.json({ jobId, n: job.n, offset: start, items: [], state: job.state, available });
   }
 
-  // data.bin is notes-only fixed-size records: n int32 per voicing
-  const bytesPerVoicing = job.n * 4;
+  // data.bin is notes-only fixed-size records: n uint8 per voicing (MIDI 21-108)
+  const bytesPerVoicing = job.n;
   const byteOffset = start * bytesPerVoicing;
   const byteLength = (end - start) * bytesPerVoicing;
 
   if (!fs.existsSync(job.dataPath)) {
-    // Shouldn't happen if state===done, but be defensive
     return res.json({ jobId, n: job.n, offset: start, items: [], state: job.state, available: 0 });
   }
 
@@ -240,11 +249,12 @@ router.get("/jobs/:jobId/page", (req, res) => {
   fs.readSync(fd, buf, 0, byteLength, byteOffset);
   fs.closeSync(fd);
 
-  const ints = new Int32Array(buf.buffer, buf.byteOffset, byteLength / 4);
+  // Expand uint8 back to regular JS numbers for the response
+  const bytes = new Uint8Array(buf.buffer, buf.byteOffset, byteLength);
 
   const items = [];
-  for (let i = 0; i < ints.length; i += job.n) {
-    items.push({ notes: Array.from(ints.slice(i, i + job.n)) });
+  for (let i = 0; i < bytes.length; i += job.n) {
+    items.push({ notes: Array.from(bytes.slice(i, i + job.n)) });
   }
 
   res.json({ jobId, n: job.n, offset: start, items, state: job.state, available });
