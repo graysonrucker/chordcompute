@@ -7,6 +7,13 @@ const { finished } = require("stream/promises");
 
 // IMPORTANT: this module must be importable inside a worker.
 const { createGenerator } = require("../wasm/voicingsClient");
+const { compress, decompress } = require("@mongodb-js/zstd");
+
+// Number of uncompressed records accumulated into one zstd frame in data.bin.
+// Larger = better compression; smaller = less decompression work per page read.
+// 4096 is a good balance (~40KB uncompressed for n=10, decompresses in ~100µs).
+const FRAME_RECORDS = 4096;
+const ZSTD_LEVEL = 3;
 
 function writeMeta(metaPath, meta) {
   fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
@@ -157,6 +164,98 @@ function writeMeta(metaPath, meta) {
         2
       )
     );
+  }
+
+  // ---- FrameWriter -----------------------------------------------------------
+  // Accumulates uint8 records into fixed-size frames, compresses each frame
+  // with zstd, and appends it to data.bin. Maintains a parallel index file
+  // (data.index.bin) so the page endpoint can seek directly to any frame.
+  //
+  // Index binary layout (all uint32 LE):
+  //   [FRAME_RECORDS, frameCount, totalRecords,
+  //    byteOffset[0..frameCount],          // frameCount+1 entries; last = file size
+  //    recordCount[0..frameCount-1]]       // records in each frame (may be < FRAME_RECORDS
+  //                                        // at span boundaries)
+  //
+  // Note: byte offsets are uint32, which supports up to ~4 GB of compressed data.
+  // Jobs approaching that size should not arise in practice given current inputs.
+
+  class FrameWriter {
+    constructor(dataPath, indexPath, recordSize) {
+      this.indexPath = indexPath;
+      this.recordSize = recordSize;
+
+      // Frame accumulation buffer
+      this.frameBuf = Buffer.allocUnsafe(FRAME_RECORDS * recordSize);
+      this.frameBufRecords = 0;
+
+      // Index state
+      this.byteOffsets = [0]; // byteOffsets[i] = start of frame i; [frameCount] = file size
+      this.recordCounts = []; // records in frame i
+      this.committedRecords = 0;
+      this.hasPendingWrite = false; // true once any frame has been flushed
+
+      this.dataFd = fs.openSync(dataPath, "w");
+    }
+
+    // Push one record (a Buffer/Uint8Array slice of exactly recordSize bytes).
+    async pushRecordBytes(src) {
+      src.copy(this.frameBuf, this.frameBufRecords * this.recordSize);
+      this.frameBufRecords++;
+      if (this.frameBufRecords === FRAME_RECORDS) {
+        await this._flushFrame();
+      }
+    }
+
+    // Compress and write the current buffer (full or partial) as one frame.
+    async _flushFrame() {
+      if (this.frameBufRecords === 0) return;
+      const uncompressed = this.frameBuf.subarray(0, this.frameBufRecords * this.recordSize);
+      const compressed = await compress(uncompressed, ZSTD_LEVEL);
+
+      fs.writeSync(this.dataFd, compressed);
+      const prevOffset = this.byteOffsets[this.byteOffsets.length - 1];
+      this.byteOffsets.push(prevOffset + compressed.length);
+      this.recordCounts.push(this.frameBufRecords);
+      this.committedRecords += this.frameBufRecords;
+      this.frameBufRecords = 0;
+      this.hasPendingWrite = true;
+    }
+
+    // Called at each span boundary: flush whatever is buffered, then fsync so
+    // the page endpoint can safely read up to committedRecords.
+    async sealSpan() {
+      await this._flushFrame();
+      if (this.hasPendingWrite) {
+        fs.fsyncSync(this.dataFd);
+        this.hasPendingWrite = false;
+      }
+      // Write the index after every span so the page endpoint can use it
+      // immediately during streaming, before finalize() is called.
+      this._writeIndex();
+    }
+
+    // Flush remaining records, close the data file, write the index.
+    async finalize() {
+      await this._flushFrame();
+      fs.fsyncSync(this.dataFd);
+      fs.closeSync(this.dataFd);
+      this.dataFd = -1;
+      this._writeIndex();
+    }
+
+    _writeIndex() {
+      const frameCount = this.recordCounts.length;
+      // 3 header words + (frameCount+1) byte offsets + frameCount record counts
+      const buf = Buffer.allocUnsafe((3 + frameCount + 1 + frameCount) * 4);
+      let pos = 0;
+      buf.writeUInt32LE(FRAME_RECORDS, pos); pos += 4;
+      buf.writeUInt32LE(frameCount, pos); pos += 4;
+      buf.writeUInt32LE(this.committedRecords, pos); pos += 4;
+      for (const off of this.byteOffsets) { buf.writeUInt32LE(off, pos); pos += 4; }
+      for (const cnt of this.recordCounts) { buf.writeUInt32LE(cnt, pos); pos += 4; }
+      fs.writeFileSync(this.indexPath, buf);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -341,9 +440,12 @@ function writeMeta(metaPath, meta) {
   }
 
 
-  // Span mode: 88 passes, one per span. Each completed span's bucket is
-  // immediately appended to data.bin so the page endpoint can serve results
-  // while the job is still running. No final concat step needed.
+  // -------------------------------------------------------------------------
+
+  // Span mode: 88 passes, one per span. Each completed span's records are fed
+  // through FrameWriter, which compresses them into data.bin incrementally.
+  // Bucket files are also compressed in-place after each span for disk savings
+  // during the generation window.
 
   async function runSpanMode() {
     countBySpan = new Array(88).fill(0);
@@ -361,6 +463,9 @@ function writeMeta(metaPath, meta) {
       createdAt,
     });
 
+    const indexPath = path.join(jobDir, "data.index.bin");
+    const frameWriter = new FrameWriter(dataPath, indexPath, n);
+
     const gen = await createGenerator(inputNotes, {
       capInts: 2_097_152,
       enableSpanMode: true,
@@ -370,6 +475,7 @@ function writeMeta(metaPath, meta) {
       const st = gen.beginSpan(span);
       if (st !== 0) {
         gen.close();
+        await frameWriter.finalize().catch(() => {});
         throw new Error(`WASM beginSpan(${span}) failed status=${st}`);
       }
 
@@ -391,6 +497,7 @@ function writeMeta(metaPath, meta) {
           out.end();
           await finished(out).catch(() => {});
           gen.close();
+          await frameWriter.finalize().catch(() => {});
           throw new Error(`WASM nextBatch failed status=${status} (span=${span})`);
         }
 
@@ -405,19 +512,41 @@ function writeMeta(metaPath, meta) {
 
       if (streamErrorRef.value) {
         gen.close();
+        await frameWriter.finalize().catch(() => {});
         throw streamErrorRef.value;
       }
 
-      // Append this span's bucket to data.bin immediately so pages are
-      // readable as each span completes.
+      // Stream this span's bucket into the FrameWriter in fixed-size chunks
+      // to avoid holding the entire bucket in memory for large spans.
       if (countBySpan[span] > 0) {
-        await pipeline(
-          fs.createReadStream(p),
-          fs.createWriteStream(dataPath, { flags: "a" })
-        );
+        const CHUNK_RECORDS = FRAME_RECORDS * 4; // read 4 frames worth at a time
+        const chunkBuf = Buffer.allocUnsafe(CHUNK_RECORDS * n);
+        const bucketFd = fs.openSync(p, "r");
+        let bucketPos = 0;
+
+        try {
+          for (;;) {
+            const bytesRead = fs.readSync(bucketFd, chunkBuf, 0, chunkBuf.length, bucketPos);
+            if (bytesRead === 0) break;
+
+            const recordsRead = bytesRead / n;
+            for (let r = 0; r < recordsRead; r++) {
+              await frameWriter.pushRecordBytes(chunkBuf.subarray(r * n, (r + 1) * n));
+            }
+
+            bucketPos += bytesRead;
+          }
+        } finally {
+          fs.closeSync(bucketFd);
+        }
+
+        // Bucket data is now captured in data.bin — delete to reclaim disk space.
+        fs.unlinkSync(p);
       }
 
-      availableRef.value = totalCountRef.value;
+      // Seal: flush any partial frame and fsync so data.bin is safe to read.
+      await frameWriter.sealSpan();
+      availableRef.value = frameWriter.committedRecords;
 
       writeMeta(metaPath, {
         jobId,
@@ -437,6 +566,7 @@ function writeMeta(metaPath, meta) {
     }
 
     gen.close();
+    await frameWriter.finalize();
     writeSpanManifest();
   }
 

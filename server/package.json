@@ -11,6 +11,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@mongodb-js/zstd": "^1.2.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "sqlite3": "^5.1.7"

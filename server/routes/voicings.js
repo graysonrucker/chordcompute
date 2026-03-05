@@ -4,8 +4,92 @@ const fs = require("fs");
 const path = require("path");
 const { Worker } = require("worker_threads");
 const { estimateVoicings, generationMode } = require("../lib/noteUtils");
+const { decompress } = require("@mongodb-js/zstd");
 
 const router = express.Router();
+
+// ---- Frame-index helpers (span mode compressed data.bin) -------------------
+
+// Parse data.index.bin written by FrameWriter in the worker.
+function loadIndex(indexPath) {
+  const buf = fs.readFileSync(indexPath);
+  let pos = 0;
+  const frameRecords = buf.readUInt32LE(pos); pos += 4;
+  const frameCount   = buf.readUInt32LE(pos); pos += 4;
+  const totalRecords = buf.readUInt32LE(pos); pos += 4;
+
+  const byteOffsets = [];
+  for (let i = 0; i <= frameCount; i++) {
+    byteOffsets.push(buf.readUInt32LE(pos)); pos += 4;
+  }
+  const recordCounts = [];
+  for (let i = 0; i < frameCount; i++) {
+    recordCounts.push(buf.readUInt32LE(pos)); pos += 4;
+  }
+
+  // Precompute cumulative record start of each frame for binary search.
+  const recordStarts = new Array(frameCount);
+  let cum = 0;
+  for (let i = 0; i < frameCount; i++) {
+    recordStarts[i] = cum;
+    cum += recordCounts[i];
+  }
+
+  return { frameRecords, frameCount, totalRecords, byteOffsets, recordCounts, recordStarts };
+}
+
+// Binary search: largest i such that recordStarts[i] <= recordIdx.
+function findFrame(recordStarts, recordIdx) {
+  let lo = 0, hi = recordStarts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (recordStarts[mid] <= recordIdx) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+// Read `end - start` records from the frame-indexed compressed data.bin.
+// Returns an array of { notes: number[] } objects.
+async function readFrameIndexedPage(dataPath, indexPath, start, end, n) {
+  const index = loadIndex(indexPath);
+
+  if (index.frameCount === 0 || start >= end) return [];
+
+  const items = [];
+  const fd = fs.openSync(dataPath, "r");
+
+  try {
+    let recordIdx = start;
+
+    while (recordIdx < end) {
+      const frameIdx = findFrame(index.recordStarts, recordIdx);
+      const frameStart    = index.recordStarts[frameIdx];
+      const frameRecCnt   = index.recordCounts[frameIdx];
+      const frameByteOff  = index.byteOffsets[frameIdx];
+      const frameByteLen  = index.byteOffsets[frameIdx + 1] - frameByteOff;
+
+      const compressedBuf = Buffer.allocUnsafe(frameByteLen);
+      fs.readSync(fd, compressedBuf, 0, frameByteLen, frameByteOff);
+      const decompressed = await decompress(compressedBuf);
+
+      const withinStart = recordIdx - frameStart;
+      const withinEnd   = Math.min(frameRecCnt, end - frameStart);
+
+      for (let i = withinStart; i < withinEnd; i++) {
+        const byteOff = i * n;
+        items.push({ notes: Array.from(decompressed.subarray(byteOff, byteOff + n)) });
+        recordIdx++;
+      }
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  return items;
+}
+
+// ----------------------------------------------------------------------------
 
 // Optional in-memory registry. With meta.json on disk, you don't strictly need it.
 // Keeping it speeds up status/page without reading disk every time.
@@ -212,7 +296,7 @@ router.get("/jobs/:jobId/status", (req, res) => {
  *
  * Returns: { jobId, n, offset, available, state, items:[{notes:number[]}] }
  */
-router.get("/jobs/:jobId/page", (req, res) => {
+router.get("/jobs/:jobId/page", async (req, res) => {
   const jobId = req.params.jobId;
   const { job } = getJobOrMeta(req, jobId);
   if (!job) return res.status(404).json({ error: "Job not found" });
@@ -249,29 +333,43 @@ router.get("/jobs/:jobId/page", (req, res) => {
     return res.json({ jobId, n: job.n, offset: start, items: [], state: job.state, available });
   }
 
-  // data.bin is notes-only fixed-size records: n uint8 per voicing (MIDI 21-108)
-  const bytesPerVoicing = job.n;
-  const byteOffset = start * bytesPerVoicing;
-  const byteLength = (end - start) * bytesPerVoicing;
-
   if (!fs.existsSync(job.dataPath)) {
     return res.json({ jobId, n: job.n, offset: start, items: [], state: job.state, available: 0 });
   }
 
-  const fd = fs.openSync(job.dataPath, "r");
-  const buf = Buffer.allocUnsafe(byteLength);
-  fs.readSync(fd, buf, 0, byteLength, byteOffset);
-  fs.closeSync(fd);
+  try {
+    // Span mode jobs written by the current worker use a frame-indexed
+    // compressed data.bin. Older span jobs (or standard mode jobs) use the
+    // original flat uncompressed layout — fall back to direct read for those.
+    const indexPath = path.join(job.jobDir, "data.index.bin");
+    const useFrameIndex = fs.existsSync(indexPath);
 
-  // Expand uint8 back to regular JS numbers for the response
-  const bytes = new Uint8Array(buf.buffer, buf.byteOffset, byteLength);
+    let items;
 
-  const items = [];
-  for (let i = 0; i < bytes.length; i += job.n) {
-    items.push({ notes: Array.from(bytes.slice(i, i + job.n)) });
+    if (useFrameIndex) {
+      items = await readFrameIndexedPage(job.dataPath, indexPath, start, end, job.n);
+    } else {
+      // Original direct read — uncompressed fixed-size records.
+      const bytesPerVoicing = job.n;
+      const byteOffset = start * bytesPerVoicing;
+      const byteLength = (end - start) * bytesPerVoicing;
+
+      const fd = fs.openSync(job.dataPath, "r");
+      const buf = Buffer.allocUnsafe(byteLength);
+      fs.readSync(fd, buf, 0, byteLength, byteOffset);
+      fs.closeSync(fd);
+
+      const bytes = new Uint8Array(buf.buffer, buf.byteOffset, byteLength);
+      items = [];
+      for (let i = 0; i < bytes.length; i += job.n) {
+        items.push({ notes: Array.from(bytes.slice(i, i + job.n)) });
+      }
+    }
+
+    res.json({ jobId, n: job.n, offset: start, items, state: job.state, available });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to read voicings", detail: err?.message });
   }
-
-  res.json({ jobId, n: job.n, offset: start, items, state: job.state, available });
 });
 
 /**
