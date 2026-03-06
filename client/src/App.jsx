@@ -5,6 +5,7 @@ import { useVoicingsQuery } from "./hooks/useVoicingsQuery";
 
 import KeyboardPanel from "./components/piano/KeyboardPanel";
 import VoicingsResults from "./components/voicings/VoicingResults";
+import Pagination from "./components/Pagination";
 
 export default function App() {
   const range = useKeyboardRange();
@@ -16,10 +17,11 @@ export default function App() {
     pageLoading,
     error,
     generate,
-    nextPage,
-    prevPage,
-    canPrev,
-    canNext,
+    goToPage,
+    currentPage,
+    totalPages,
+    availablePages,
+    isStreaming,
   } = useVoicingsQuery();
 
   useEffect(() => {
@@ -46,26 +48,24 @@ export default function App() {
         {error && <div className="mt-4 text-red-300">{error}</div>}
 
         {results && (
-          <div className="mt-6 flex items-center gap-2">
-            <button
-              className="rounded bg-slate-800 px-3 py-1 text-slate-100 disabled:opacity-50"
-              onClick={prevPage}
-              disabled={!canPrev || loading || pageLoading}
-            >
-              Prev
-            </button>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              availablePages={availablePages}
+              isStreaming={isStreaming}
+              disabled={loading || pageLoading}
+              onPageChange={goToPage}
+            />
 
-            <button
-              className="rounded bg-slate-800 px-3 py-1 text-slate-100 disabled:opacity-50"
-              onClick={nextPage}
-              disabled={!canNext || loading || pageLoading}
-            >
-              Next
-            </button>
-
-            <div className="ml-3 text-slate-300">
-              Showing {results.offset + 1}–
-              {Math.min(results.offset + results.limit, results.count)} of {results.count}
+            <div className="text-sm text-slate-400">
+              {results.count > 0 && (
+                <>
+                  Showing {results.offset + 1}–
+                  {Math.min(results.offset + results.limit, results.available)} of{" "}
+                  {isStreaming ? `${results.count}+` : results.count}
+                </>
+              )}
             </div>
           </div>
         )}

@@ -194,6 +194,14 @@ export function useVoicingsQuery() {
     await fetchPage(prevOffset);
   }, [results, fetchPage]);
 
+  // Jump to any 0-based page index clamped to available pages
+  const goToPage = useCallback(async (pageIndex) => {
+    if (!results) return;
+    const offset = pageIndex * results.limit;
+    if (offset < 0 || offset >= results.available) return;
+    await fetchPage(offset);
+  }, [results, fetchPage]);
+
   const clear = useCallback(async () => {
     canceledRef.current = true;
     setResults(null);
@@ -210,10 +218,21 @@ export function useVoicingsQuery() {
   }, []);
 
   const canPrev = !!results && results.offset > 0;
-  // Ceiling is `available` — the committed read boundary — not `count`, which
+  // Ceiling is `available` not `count`, which
   // may include voicings still buffered in the worker during span mode.
   const canNext =
     !!results && results.offset + results.limit < (results.available ?? 0);
+
+  const currentPage = results ? Math.floor(results.offset / results.limit) : 0;
+  const availablePages = results
+    ? Math.ceil((results.available ?? 0) / results.limit)
+    : 0;
+  const totalPages = results
+    ? results.state === "done"
+      ? Math.ceil((results.count ?? 0) / results.limit)
+      : availablePages
+    : 0;
+  const isStreaming = !!results && results.state !== "done";
 
   return {
     results,
@@ -224,8 +243,13 @@ export function useVoicingsQuery() {
     clear,
     nextPage,
     prevPage,
-    fetchPage, // optional if you want jump-to-page
+    goToPage,
+    fetchPage,
     canPrev,
     canNext,
+    currentPage,
+    availablePages,
+    totalPages,
+    isStreaming,
   };
 }
