@@ -1,5 +1,3 @@
-// client/lib/api.js (or wherever this lives)
-
 async function httpJson(url, options) {
   const res = await fetch(url, options);
 
@@ -24,11 +22,11 @@ async function httpJson(url, options) {
 }
 
 // Start a generation job
-export async function startVoicingsJob(notes) {
+export async function startVoicingsJob(notes, rangeLow, rangeHigh) {
   return httpJson("/api/voicings/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ notes }),
+    body: JSON.stringify({ notes , rangeLow, rangeHigh}),
   });
 }
 

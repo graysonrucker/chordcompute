@@ -144,11 +144,17 @@ function getJobOrMeta(req, jobId) {
 
 /**
  * POST /api/voicings/jobs
- * Body: { notes: number[] }
+ * Body: { notes: number[] , rangeLow, rangeHigh}
  * Returns immediately: { jobId, estimate, mode }
  */
 router.post("/jobs", (req, res) => {
   const inputNotes = req.body?.notes;
+  const rangeLow = req.body?.rangeLow;
+  const rangeHigh = req.body?.rangeHigh;
+
+  console.log("ROUTE body:", req.body);//
+  console.log("ROUTE range:", { rangeLow, rangeHigh });//
+
   if (!Array.isArray(inputNotes) || inputNotes.length === 0) {
     return res.status(400).json({ error: "Body must include { notes: number[] }" });
   }
@@ -204,6 +210,8 @@ router.post("/jobs", (req, res) => {
       jobDir,
       dataPath,
       metaPath,
+      rangeLow,
+      rangeHigh,
     },
   });
 

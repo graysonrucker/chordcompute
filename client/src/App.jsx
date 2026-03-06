@@ -40,7 +40,7 @@ export default function App() {
           range={range}
           notes={notes}
           loading={loading}
-          onGenerate={() => generate(notes.activeNotes)}
+          onGenerate={() => generate(notes.activeNotes, range.startMidi, range.endMidi)}
         />
 
         {error && <div className="mt-4 text-red-300">{error}</div>}

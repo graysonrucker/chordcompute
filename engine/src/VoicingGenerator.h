@@ -16,7 +16,7 @@ public:
         Done = 5
     };
 
-    explicit VoicingGenerator(const std::vector<int>& inputChord);
+    explicit VoicingGenerator(const std::vector<int>& inputChord, int rangeLow, int rangeHigh);
 
     // Initialize/resets internal iterator state for batch generation.
     // After begin(), call nextBatch() repeatedly until it returns 0 (Done).
@@ -77,7 +77,7 @@ private:
         return (r < 0) ? (r + 12) : r;
     }
 
-    void buildMidiTable();
+    void buildMidiTable(int rangeLow, int rangeHigh);
 
     // Advances the iterator until it either:
     // - emits at least one record, or

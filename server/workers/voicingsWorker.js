@@ -20,7 +20,7 @@ function writeMeta(metaPath, meta) {
 }
 
 (async () => {
-  const { jobId, inputNotes, n, mode, jobDir, dataPath, metaPath } = workerData;
+  const { jobId, inputNotes, n, mode, jobDir, dataPath, metaPath, rangeLow, rangeHigh } = workerData;
 
   const createdAt = Date.now();
 
@@ -399,6 +399,8 @@ function writeMeta(metaPath, meta) {
     const gen = await createGenerator(inputNotes, {
       capInts: 2_097_152,
       enableSpanMode: false,
+      rangeLow,
+      rangeHigh,
     });
 
     try {
@@ -469,6 +471,8 @@ function writeMeta(metaPath, meta) {
     const gen = await createGenerator(inputNotes, {
       capInts: 2_097_152,
       enableSpanMode: true,
+      rangeLow,
+      rangeHigh,
     });
 
     for (let span = 0; span <= 87; ++span) {

@@ -10,18 +10,18 @@ static inline uint64_t fnv1a64_step(uint64_t h, uint64_t x) {
     return h;
 }
 
-VoicingGenerator::VoicingGenerator(const std::vector<int>& inputChord) {
+VoicingGenerator::VoicingGenerator(const std::vector<int>& inputChord, int rangeLow, int rangeHigh) {
     originalInput.assign(inputChord.begin(), inputChord.end());
-    buildMidiTable();
+    buildMidiTable(rangeLow, rangeHigh);
     lastStatus = Status::Ok;
     lastResultsSize = 0;
 }
 
-void VoicingGenerator::buildMidiTable() {
+void VoicingGenerator::buildMidiTable(int rangeLow, int rangeHigh) {
     // Clear in case constructor is ever reused differently
     for (int pc = 0; pc < 12; ++pc) midiTable[pc].clear();
 
-    for (int midi = 21; midi <= 108; ++midi) {
+    for (int midi = rangeLow; midi <= rangeHigh; ++midi) {
         // midi fits in uint8_t (21..108)
         midiTable[pc12(midi)].push_back((uint8_t)midi);
     }

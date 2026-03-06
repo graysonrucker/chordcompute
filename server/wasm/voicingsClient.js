@@ -39,20 +39,32 @@ async function getModule() {
 async function createGenerator(inputNotes, opts = {}) {
   const Module = await getModule();
 
+  const rangeLow = Number.isFinite(opts.rangeLow) ? (opts.rangeLow | 0) : 21;
+  const rangeHigh = Number.isFinite(opts.rangeHigh) ? (opts.rangeHigh | 0) : 108;
+
   // New exports (span-by-span)
   const vg_create_no_begin = Module.cwrap("vg_create_no_begin", "number", [
     "number",
     "number",
     "number",
-  ]);
-  const vg_begin_span = Module.cwrap("vg_begin_span", "number", [
-    "number",
     "number",
     "number",
   ]);
 
-  // Old exports (backward compatible)
-  const vg_create = Module.cwrap("vg_create", "number", ["number", "number", "number"]);
+  
+  const vg_begin_span = Module.cwrap("vg_begin_span", "number", [
+  "number",
+  "number",
+  "number",
+]);
+
+const vg_create = Module.cwrap("vg_create", "number", [
+  "number",
+  "number",
+  "number",
+  "number",
+  "number",
+]);
   const vg_next_batch = Module.cwrap("vg_next_batch", "number", [
     "number",
     "number",
@@ -83,10 +95,10 @@ async function createGenerator(inputNotes, opts = {}) {
   let createStatus = 0;
 
   if (wantsSpan) {
-    handle = vg_create_no_begin(inPtr, notes.length, statusPtr);
+    handle = vg_create_no_begin(inPtr, notes.length, statusPtr, rangeLow, rangeHigh);
     createStatus = Module.HEAP32[statusPtr >> 2];
   } else {
-    handle = vg_create(inPtr, notes.length, statusPtr);
+    handle = vg_create(inPtr, notes.length, statusPtr, rangeLow, rangeHigh);
     createStatus = Module.HEAP32[statusPtr >> 2];
   }
 

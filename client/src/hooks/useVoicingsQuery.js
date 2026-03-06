@@ -67,7 +67,7 @@ export function useVoicingsQuery() {
     }
   }, [results?.limit]);
 
-  const generate = useCallback(async (activeNotes) => {
+  const generate = useCallback(async (activeNotes, rangeLow, rangeHigh) => {
     if (!activeNotes || activeNotes.length === 0) return;
 
     canceledRef.current = false;
@@ -88,7 +88,7 @@ export function useVoicingsQuery() {
     await new Promise(requestAnimationFrame);
 
     try {
-      const { jobId, mode } = await startVoicingsJob(activeNotes);
+      const { jobId, mode } = await startVoicingsJob(activeNotes, rangeLow, rangeHigh);
       jobIdRef.current = jobId;
 
       const limit = 500; // <-- your UI page size (200/500/1000 etc.)

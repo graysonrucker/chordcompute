@@ -18,18 +18,19 @@
 
 struct VGState {
     VoicingGenerator gen;
-    explicit VGState(const std::vector<int>& input) : gen(input) {}
+    VGState(const std::vector<int>& input, int16_t lo, int16_t hi)
+        : gen(input, lo, hi) {}
 };
 
 extern "C" {
 
-// Backward-compatible: create + begin() (no span constraint)
-int32_t vg_create(const int32_t* notes, int32_t n, int32_t* outStatus) {
+//create + begin() (no span constraint)
+int32_t vg_create(const int32_t* notes, int32_t n, int32_t* outStatus, int32_t rangeLow, int32_t rangeHigh) {
     std::vector<int> input;
     input.reserve(n);
     for (int32_t i = 0; i < n; ++i) input.push_back((int)notes[i]);
 
-    VGState* st = new (std::nothrow) VGState(input);
+    VGState* st = new (std::nothrow) VGState(input, rangeLow, rangeHigh);
     if (!st) {
         if (outStatus) *outStatus = (int32_t)VoicingGenerator::Status::AllocationFailed;
         return 0;
@@ -41,13 +42,13 @@ int32_t vg_create(const int32_t* notes, int32_t n, int32_t* outStatus) {
     return (int32_t)(uintptr_t)st;
 }
 
-// New: create without calling begin yet (so JS can call begin_span)
-int32_t vg_create_no_begin(const int32_t* notes, int32_t n, int32_t* outStatus) {
+//create without calling begin yet (so JS can call begin_span)
+int32_t vg_create_no_begin(const int32_t* notes, int32_t n, int32_t* outStatus, int32_t rangeLow, int32_t rangeHigh) {
     std::vector<int> input;
     input.reserve(n);
     for (int32_t i = 0; i < n; ++i) input.push_back((int)notes[i]);
 
-    VGState* st = new (std::nothrow) VGState(input);
+    VGState* st = new (std::nothrow) VGState(input, rangeLow, rangeHigh);
     if (!st) {
         if (outStatus) *outStatus = (int32_t)VoicingGenerator::Status::AllocationFailed;
         return 0;
@@ -57,8 +58,8 @@ int32_t vg_create_no_begin(const int32_t* notes, int32_t n, int32_t* outStatus) 
     return (int32_t)(uintptr_t)st;
 }
 
-// New: reset generator for a specific span (0..87).
-// This is the key to span-by-span exact dedupe with bounded memory.
+
+//span-by-span exact dedupe with bounded memory.
 int32_t vg_begin_span(int32_t handle, int32_t span, int32_t* outStatus) {
     VGState* st = (VGState*)(uintptr_t)handle;
     if (!st) {
