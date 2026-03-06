@@ -58,3 +58,17 @@ export async function cancelVoicingsJob(jobId) {
   if (!jobId) return { ok: true };
   return httpJson(`/api/voicings/jobs/${jobId}`, { method: "DELETE" });
 }
+
+/**
+ * Fire-and-forget cancel that survives page unload (close / refresh).
+ * Uses fetch keepalive so the browser completes the request even if the
+ * document is being torn down. Returns void — do not await in unload handlers.
+ */
+export function cancelVoicingsJobOnUnload(jobId) {
+  if (!jobId) return;
+  try {
+    fetch(`/api/voicings/jobs/${jobId}`, { method: "DELETE", keepalive: true });
+  } catch {
+    // Best-effort; nothing more we can do during unload.
+  }
+}

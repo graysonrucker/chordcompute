@@ -1,9 +1,10 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   startVoicingsJob,
   getVoicingsJobStatus,
   getVoicingsJobPage,
   cancelVoicingsJob,
+  cancelVoicingsJobOnUnload,
 } from "../lib/api";
 
 function sleep(ms) {
@@ -25,6 +26,14 @@ export function useVoicingsQuery() {
 
   const jobIdRef = useRef(null);
   const canceledRef = useRef(false);
+
+  // Cancel the active job if the user closes or refreshes the page.
+  // keepalive: true in cancelVoicingsJobOnUnload lets the request survive unload.
+  useEffect(() => {
+    const handleUnload = () => cancelVoicingsJobOnUnload(jobIdRef.current);
+    window.addEventListener("beforeunload", handleUnload);
+    return () => window.removeEventListener("beforeunload", handleUnload);
+  }, []); // registers once; reads jobIdRef.current at unload time
 
   const fetchPage = useCallback(async (offset) => {
     const jobId = jobIdRef.current;
