@@ -1,24 +1,36 @@
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
-const { db, initialize } = require('./database');
+const express = require("express");
+const cors = require("cors");
+const path = require("path");
+const fs = require("fs");
+const { db, initialize } = require("./database");
 
 const voicingRoutes = require("./routes/voicings");
 
 initialize();
 
 const app = express();
-app.use(cors());
-app.use(express.json());
 
-app.get('/api/notes', (req, res) => {
+if (process.env.NODE_ENV !== "production") {
+  app.use(cors());
+}
+
+app.use(express.json({ limit: "1mb" }));
+
+// Jobs dir for future .bin outputs
+const JOBS_DIR = path.join(__dirname, "jobs");
+fs.mkdirSync(JOBS_DIR, { recursive: true });
+app.locals.JOBS_DIR = JOBS_DIR;
+
+app.get("/api/health", (req, res) => res.json({ ok: true }));
+
+app.get("/api/notes", (req, res) => {
   db.all("SELECT * FROM notes", (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
 });
 
-app.get('/api/chord-types', (req, res) => {
+app.get("/api/chord-types", (req, res) => {
   db.all("SELECT * FROM chord_types", (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
@@ -35,6 +47,7 @@ app.get(/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-app.listen(3000, () => {
-  console.log("Server running on http://localhost:3000");
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
 });

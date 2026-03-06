@@ -51,20 +51,6 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
         </div>
       </div>
 
-      <div className="mt-4 text-sm text-slate-300">
-        Range:{" "}
-        <span className="text-slate-100">
-          MIDI {range.startMidi}–{range.endMidi}
-        </span>
-      </div>
-
-      <div className="mt-2 text-sm text-slate-300">
-        Active notes (MIDI):{" "}
-        <span className="text-slate-100">
-          {notes.activeNotes.length ? notes.activeNotes.join(", ") : "none"}
-        </span>
-      </div>
-
       <button
         className="mt-4 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-60"
         onClick={onGenerate}

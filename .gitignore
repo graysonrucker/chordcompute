@@ -17,3 +17,9 @@ dist/
 
 #VSCode
 .vscode
+
+#C++
+*.exe
+
+#jobs
+/server/jobs/*
