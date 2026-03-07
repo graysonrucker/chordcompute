@@ -444,15 +444,22 @@ function writeMeta(metaPath, meta) {
 
   // -------------------------------------------------------------------------
 
-  // Span mode: 88 passes, one per span. Each completed span's records are fed
-  // through FrameWriter, which compresses them into data.bin incrementally.
-  // Bucket files are also compressed in-place after each span for disk savings
-  // during the generation window.
+  // Span mode: 88 passes, one per span, distributed across a small pool of
+  // span compute workers (spanWorker.js). Each worker owns its own WASM
+  // instance so spans run in parallel.
+  //
+  // Results arrive out of order; this coordinator buffers completed spans and
+  // commits them to FrameWriter in strict ascending order so that `available`
+  // advances contiguously and the client can page results as they stream in.
+  //
+  // With NUM_WORKERS=2 the worst-case buffer is one span's records held in
+  // memory (when worker 2 finishes span N+1 before worker 1 finishes span N).
+  // This is a modest memory overhead in exchange for meaningful parallelism on
+  // the larger mid-range spans.
 
   async function runSpanMode() {
     countBySpan = new Array(88).fill(0);
 
-    fs.mkdirSync(bucketsDir, { recursive: true });
     fs.mkdirSync(path.dirname(dataPath), { recursive: true });
 
     writeMeta(metaPath, {
@@ -468,108 +475,203 @@ function writeMeta(metaPath, meta) {
     const indexPath = path.join(jobDir, "data.index.bin");
     const frameWriter = new FrameWriter(dataPath, indexPath, n);
 
-    const gen = await createGenerator(inputNotes, {
-      capInts: 2_097_152,
-      enableSpanMode: true,
-      rangeLow,
-      rangeHigh,
-    });
+    // --- Spawn span compute workers -----------------------------------------
 
-    for (let span = 0; span <= 87; ++span) {
-      const st = gen.beginSpan(span);
-      if (st !== 0) {
-        gen.close();
-        await frameWriter.finalize().catch(() => {});
-        throw new Error(`WASM beginSpan(${span}) failed status=${st}`);
-      }
+    const NUM_WORKERS = 2;
+    const spanWorkerPath = path.join(__dirname, "spanWorker.js");
+    const { Worker: SpanWorker } = require("worker_threads");
 
-      const p = getBucketPath(span);
-      const out = fs.createWriteStream(p, {
-        flags: "w",
-        highWaterMark: 1 << 20,
+    const pool = [];
+    for (let i = 0; i < NUM_WORKERS; i++) {
+      const w = new SpanWorker(spanWorkerPath, {
+        workerData: { inputNotes, n, rangeLow, rangeHigh },
       });
 
-      const streamErrorRef = { value: null };
-      out.on("error", (e) => { streamErrorRef.value = e; });
-
-      resetPending();
-
-      for (;;) {
-        const { status, chunk } = gen.next();
-
-        if (status !== 0) {
-          out.end();
-          await finished(out).catch(() => {});
-          gen.close();
-          await frameWriter.finalize().catch(() => {});
-          throw new Error(`WASM nextBatch failed status=${status} (span=${span})`);
-        }
-
-        if (!chunk) break;
-
-        await drainChunk(chunk, out, countBySpan, span, totalCountRef, streamErrorRef);
-      }
-
-      await flushPendingToStream(out);
-      out.end();
-      await finished(out);
-
-      if (streamErrorRef.value) {
-        gen.close();
-        await frameWriter.finalize().catch(() => {});
-        throw streamErrorRef.value;
-      }
-
-      // Stream this span's bucket into the FrameWriter in fixed-size chunks
-      // to avoid holding the entire bucket in memory for large spans.
-      if (countBySpan[span] > 0) {
-        const CHUNK_RECORDS = FRAME_RECORDS * 4; // read 4 frames worth at a time
-        const chunkBuf = Buffer.allocUnsafe(CHUNK_RECORDS * n);
-        const bucketFd = fs.openSync(p, "r");
-        let bucketPos = 0;
-
-        try {
-          for (;;) {
-            const bytesRead = fs.readSync(bucketFd, chunkBuf, 0, chunkBuf.length, bucketPos);
-            if (bytesRead === 0) break;
-
-            const recordsRead = bytesRead / n;
-            for (let r = 0; r < recordsRead; r++) {
-              await frameWriter.pushRecordBytes(chunkBuf.subarray(r * n, (r + 1) * n));
-            }
-
-            bucketPos += bytesRead;
-          }
-        } finally {
-          fs.closeSync(bucketFd);
-        }
-
-        // Bucket data is now captured in data.bin — delete to reclaim disk space.
-        fs.unlinkSync(p);
-      }
-
-      // Seal: flush any partial frame and fsync so data.bin is safe to read.
-      await frameWriter.sealSpan();
-      availableRef.value = frameWriter.committedRecords;
-
-      writeMeta(metaPath, {
-        jobId,
-        state: "running",
-        n,
-        count: totalCountRef.value,
-        available: availableRef.value,
-        countBySpan,
-        createdAt,
+      // Wait for the worker's WASM instance to initialise before proceeding.
+      await new Promise((resolve, reject) => {
+        w.once("message", (msg) => {
+          if (msg.type === "ready") resolve();
+          else reject(new Error(msg.error || "Unexpected message during span worker init"));
+        });
+        w.once("error", reject);
       });
 
-      parentPort.postMessage({
-        type: "spanComplete",
-        span,
-        available: availableRef.value,
-      });
+      pool.push({ worker: w, busy: false });
     }
 
-    gen.close();
+    // --- Ordered-commit coordinator -----------------------------------------
+    //
+    // Workers stream records back in fixed-size chunks which are immediately
+    // written to per-span temp files — memory stays flat regardless of span
+    // size. When a span is fully done, tryCommit() reads its temp file into
+    // FrameWriter in strict ascending order so `available` advances
+    // contiguously for the client.
+
+    // Per-span state: temp file path, sync write fd, record count, done flag.
+    const spanState = new Map();
+
+    fs.mkdirSync(bucketsDir, { recursive: true });
+
+    function getOrOpenSpan(span) {
+      const existing = spanState.get(span);
+      if (existing && existing.fd >= 0) return existing;
+
+      const tmpPath = getBucketPath(span);
+      const fd = fs.openSync(tmpPath, existing ? "a" : "w");
+      const state = { tmpPath, fd, recordCount: existing?.recordCount ?? 0, done: false };
+      spanState.set(span, state);
+      return state;
+    }
+
+    let nextToDispatch = 0;
+    let nextToCommit   = 0;
+    const maxSpan      = rangeHigh - rangeLow;
+
+    // Commit all contiguous completed spans starting from nextToCommit.
+    let committing = false;
+
+    async function tryCommit() {
+      if (committing) return;
+      committing = true;
+      try {
+        while (true) {
+          const state = spanState.get(nextToCommit);
+          if (!state || !state.done) break;
+
+          const { tmpPath, recordCount } = state;
+          const span = nextToCommit;
+
+          // Close the write fd before reading.
+          fs.closeSync(state.fd);
+          state.fd = -1;
+
+          countBySpan[span] = recordCount;
+          totalCountRef.value += recordCount;
+
+          // Stream temp file into FrameWriter in chunks to keep read memory flat.
+          if (recordCount > 0) {
+            const READ_CHUNK = 4096; // records per read
+            const readBuf = Buffer.allocUnsafe(READ_CHUNK * n);
+            const readFd  = fs.openSync(tmpPath, "r");
+            let pos = 0;
+
+            try {
+              for (;;) {
+                const bytesRead = fs.readSync(readFd, readBuf, 0, readBuf.length, pos);
+                if (bytesRead === 0) break;
+                const recs = bytesRead / n;
+                for (let r = 0; r < recs; r++) {
+                  await frameWriter.pushRecordBytes(Buffer.from(readBuf.buffer, readBuf.byteOffset + r * n, n));
+                }
+                pos += bytesRead;
+              }
+            } finally {
+              fs.closeSync(readFd);
+            }
+          }
+
+          // Delete temp file — data is now in FrameWriter.
+          try { fs.unlinkSync(tmpPath); } catch {}
+          spanState.delete(span);
+
+          await frameWriter.sealSpan();
+          availableRef.value = frameWriter.committedRecords;
+
+          writeMeta(metaPath, {
+            jobId,
+            state: "running",
+            n,
+            count: totalCountRef.value,
+            available: availableRef.value,
+            countBySpan,
+            createdAt,
+          });
+
+          parentPort.postMessage({
+            type: "spanComplete",
+            span,
+            available: availableRef.value,
+          });
+
+          nextToCommit++;
+        }
+      } finally {
+        committing = false;
+      }
+      // A spanDone may have arrived while we were awaiting — re-check.
+      if (spanState.get(nextToCommit)?.done) await tryCommit();
+    }
+
+    // --- Dispatch loop -------------------------------------------------------
+
+    await new Promise((resolve, reject) => {
+      let fatalError = null;
+
+      function dispatch() {
+        if (fatalError) return;
+
+        for (const slot of pool) {
+          if (!slot.busy && nextToDispatch <= maxSpan) {
+            const span = nextToDispatch++;
+            slot.busy = true;
+            slot.worker.postMessage({ type: "run", span });
+          }
+        }
+
+        if (nextToDispatch > maxSpan && nextToCommit > maxSpan) resolve();
+      }
+
+      for (const slot of pool) {
+        slot.worker.on("message", async (msg) => {
+          if (fatalError) return;
+
+          if (msg.type === "chunk") {
+            // Append chunk directly to temp file — zero memory accumulation.
+            try {
+              const state = getOrOpenSpan(msg.span);
+              const buf = Buffer.from(msg.records);
+              fs.writeSync(state.fd, buf);
+              state.recordCount += msg.count;
+            } catch (err) {
+              fatalError = err;
+              reject(err);
+            }
+
+          } else if (msg.type === "spanDone") {
+            slot.busy = false;
+            const state = getOrOpenSpan(msg.span);
+            state.done = true;
+
+            try {
+              await tryCommit();
+            } catch (err) {
+              fatalError = err;
+              reject(err);
+              return;
+            }
+
+            dispatch();
+
+          } else if (msg.type === "error") {
+            fatalError = new Error(msg.error || `Span worker error (span=${msg.span ?? "?"})`);
+            reject(fatalError);
+          }
+        });
+
+        slot.worker.on("error", (err) => {
+          if (!fatalError) { fatalError = err; reject(err); }
+        });
+      }
+
+      dispatch(); // kick off initial assignments
+    });
+
+    // --- Cleanup ------------------------------------------------------------
+
+    for (const slot of pool) {
+      try { slot.worker.postMessage({ type: "close" }); } catch {}
+    }
+
     await frameWriter.finalize();
     writeSpanManifest();
   }
