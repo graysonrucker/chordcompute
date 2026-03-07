@@ -194,14 +194,6 @@ export function useVoicingsQuery() {
     await fetchPage(prevOffset);
   }, [results, fetchPage]);
 
-  // Jump to any 0-based page index clamped to available pages
-  const goToPage = useCallback(async (pageIndex) => {
-    if (!results) return;
-    const offset = pageIndex * results.limit;
-    if (offset < 0 || offset >= results.available) return;
-    await fetchPage(offset);
-  }, [results, fetchPage]);
-
   const clear = useCallback(async () => {
     canceledRef.current = true;
     setResults(null);
@@ -218,11 +210,20 @@ export function useVoicingsQuery() {
   }, []);
 
   const canPrev = !!results && results.offset > 0;
-  // Ceiling is `available` not `count`, which
+  // Ceiling is `available` — the committed read boundary — not `count`, which
   // may include voicings still buffered in the worker during span mode.
   const canNext =
     !!results && results.offset + results.limit < (results.available ?? 0);
 
+  // Jump to any 0-based page index, clamped to available pages.
+  const goToPage = useCallback(async (pageIndex) => {
+    if (!results) return;
+    const offset = pageIndex * results.limit;
+    if (offset < 0 || offset >= results.available) return;
+    await fetchPage(offset);
+  }, [results, fetchPage]);
+
+  // Derived pagination metadata for random-access UI.
   const currentPage = results ? Math.floor(results.offset / results.limit) : 0;
   const availablePages = results
     ? Math.ceil((results.available ?? 0) / results.limit)

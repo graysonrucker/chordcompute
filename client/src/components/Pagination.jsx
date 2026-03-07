@@ -1,3 +1,23 @@
+/**
+ * Pagination
+ *
+ * Random-access page controls that handle two modes:
+ *
+ *  • Completed jobs  – shows the full page range; current±2 visible, gaps
+ *                      collapsed to "…"
+ *
+ *  • Streaming jobs  – only pages up to `availablePages` are clickable;
+ *                      a pulsing "…" at the end signals more pages are
+ *                      still being generated.
+ *
+ * Props
+ *  currentPage    0-based index of the currently visible page
+ *  totalPages     number of pages (= availablePages while streaming)
+ *  availablePages how many pages can actually be fetched right now
+ *  isStreaming    true while the job hasn't finished yet
+ *  disabled       grey everything out (initial load / page fetch in flight)
+ *  onPageChange   (0-based pageIndex) => void
+ */
 export default function Pagination({
   currentPage,
   totalPages,
@@ -8,10 +28,11 @@ export default function Pagination({
 }) {
   if (totalPages <= 1 && !isStreaming) return null;
 
-  // Build the ordered list of tokens to render
+  // Build the ordered list of tokens to render.
+  // A token is either a number (0-based page index) or the string "…".
   function buildTokens(current, total) {
     if (total <= 9) {
-      // Small range: show every page, no gaps needed
+      // Small range: show every page, no gaps needed.
       return Array.from({ length: total }, (_, i) => i);
     }
 
@@ -19,12 +40,26 @@ export default function Pagination({
     tokens.add(0);
     tokens.add(total - 1);
 
+    // Quarter waypoints — only add when they'd be meaningfully far from the
+    // current window and the ends, to avoid cluttering small ranges.
+    const quarter   = Math.round(total * 0.25);
+    const halfway   = Math.round(total * 0.5);
+    const threeQ    = Math.round(total * 0.75);
+
+    for (const waypoint of [quarter, halfway, threeQ]) {
+      // Only show if it's not already adjacent to first/last page and not
+      // within the current window (it'll appear there naturally anyway).
+      const nearCurrent = Math.abs(waypoint - current) <= 3;
+      const nearEnd     = waypoint <= 1 || waypoint >= total - 2;
+      if (!nearCurrent && !nearEnd) tokens.add(waypoint);
+    }
+
     // Window around current page.
     for (let i = Math.max(0, current - 2); i <= Math.min(total - 1, current + 2); i++) {
       tokens.add(i);
     }
 
-    // Sort and inject ellipsis markers where there are gaps > 1
+    // Sort and inject ellipsis markers where there are gaps > 1.
     const sorted = [...tokens].sort((a, b) => a - b);
     const result = [];
     let prev = -1;
@@ -81,7 +116,7 @@ export default function Pagination({
 
         const page = token;
         const isCurrent = page === currentPage;
-        // Pages beyond availablePages are not yet fetchable during streaming
+        // Pages beyond availablePages are not yet fetchable during streaming.
         const unavailable = page >= availablePages;
         const isDisabled = disabled || unavailable;
 

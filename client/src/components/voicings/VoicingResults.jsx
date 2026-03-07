@@ -37,9 +37,6 @@ export default function VoicingsResults({ results }) {
 
   return (
     <div className="mt-6">
-      <div className="text-slate-300">
-        Found {voicings.length} voicings
-      </div>
       {/* scroll container */}
       <div
         ref={parentRef}
