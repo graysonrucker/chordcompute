@@ -8,6 +8,7 @@ const { finished } = require("stream/promises");
 // IMPORTANT: this module must be importable inside a worker.
 const { createGenerator } = require("../wasm/voicingsClient");
 const { compress, decompress } = require("@mongodb-js/zstd");
+const { getFreeGb, formatGb } = require("../lib/diskSpace");
 
 // Number of uncompressed records accumulated into one zstd frame in data.bin.
 // Larger = better compression; smaller = less decompression work per page read.
@@ -20,7 +21,7 @@ function writeMeta(metaPath, meta) {
 }
 
 (async () => {
-  const { jobId, inputNotes, n, mode, jobDir, dataPath, metaPath, rangeLow, rangeHigh } = workerData;
+  const { jobId, inputNotes, n, mode, jobDir, dataPath, metaPath, rangeLow, rangeHigh, diskHaltGb } = workerData;
 
   const createdAt = Date.now();
 
@@ -281,17 +282,20 @@ function writeMeta(metaPath, meta) {
 
   } catch (err) {
     const error = err?.message || String(err);
+    const errorCode = err?.code ?? null;
     try {
       writeMeta(metaPath, {
         jobId,
         state: "error",
         n,
-        count: 0,
+        count: totalCountRef.value,
+        available: availableRef.value,
         error,
+        errorCode,
         createdAt: Date.now(),
       });
     } catch {}
-    parentPort.postMessage({ type: "error", error });
+    parentPort.postMessage({ type: "error", error, errorCode, available: availableRef.value });
   }
 
   // Standard mode: single-pass, bucket voicings by span on the fly, then
@@ -576,6 +580,19 @@ function writeMeta(metaPath, meta) {
 
           await frameWriter.sealSpan();
           availableRef.value = frameWriter.committedRecords;
+
+          // Mid-run disk space guard: halt the job if free space has dropped
+          // below the configured minimum since the job was accepted.
+          if (diskHaltGb != null && isFinite(diskHaltGb)) {
+            const freeGb = getFreeGb(jobDir);
+            if (freeGb < diskHaltGb) {
+              const haltErr = new Error(
+                `Generation was interrupted due to server load.`
+              );
+              haltErr.code = "HALTED_LOW_DISK";
+              throw haltErr;
+            }
+          }
 
           writeMeta(metaPath, {
             jobId,

@@ -21,7 +21,19 @@ const JOBS_DIR = path.join(__dirname, "jobs");
 fs.mkdirSync(JOBS_DIR, { recursive: true });
 app.locals.JOBS_DIR = JOBS_DIR;
 
-app.get("/api/health", (req, res) => res.json({ ok: true }));
+app.get("/api/health", (req, res) => {
+  const { getFreeGb, formatGb } = require("./lib/diskSpace");
+  const freeGb = getFreeGb(JOBS_DIR);
+  res.json({
+    ok: true,
+    disk: {
+      freeGb: isFinite(freeGb) ? parseFloat(freeGb.toFixed(2)) : null,
+      freeFormatted: formatGb(freeGb),
+      rejectThresholdGb: parseFloat(process.env.DISK_REJECT_GB ?? "60"),
+      haltThresholdGb:   parseFloat(process.env.DISK_HALT_GB   ?? "30"),
+    },
+  });
+});
 
 app.get("/api/notes", (req, res) => {
   db.all("SELECT * FROM notes", (err, rows) => {

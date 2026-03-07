@@ -5,6 +5,15 @@ const path = require("path");
 const { Worker } = require("worker_threads");
 const { estimateVoicings, generationMode } = require("../lib/noteUtils");
 const { decompress } = require("@mongodb-js/zstd");
+const { getFreeGb, formatGb } = require("../lib/diskSpace");
+
+// Minimum free disk space (in GiB) required to *accept* a new span-mode job.
+// Override via env for testing: DISK_REJECT_GB=9999 node index.js
+const DISK_REJECT_GB = parseFloat(process.env.DISK_REJECT_GB ?? "60");
+// Minimum free disk space (in GiB) allowed while a span-mode job is *running*.
+// Falling below this causes the job to be halted and the worker to exit.
+// Override via env for testing: DISK_HALT_GB=9999 node index.js
+const DISK_HALT_GB   = parseFloat(process.env.DISK_HALT_GB   ?? "30");
 
 const router = express.Router();
 
@@ -128,6 +137,7 @@ function getJobOrMeta(req, jobId) {
       available: meta.available ?? (meta.state === "done" ? (meta.count ?? 0) : 0),
       createdAt: meta.createdAt ?? null,
       error: meta.error ?? null,
+      errorCode: meta.errorCode ?? null,
       jobDir,
       dataPath,
       metaPath,
@@ -160,8 +170,20 @@ router.post("/jobs", (req, res) => {
   }
 
   const n = inputNotes.length;
-  const estimate = estimateVoicings(inputNotes);
-  const mode = generationMode(inputNotes);
+  const estimate = estimateVoicings(inputNotes, rangeLow, rangeHigh);
+  const mode = generationMode(inputNotes, rangeLow, rangeHigh);
+
+  // Pre-flight disk space check for large (span-mode) jobs.
+  // Reject immediately if there is not enough headroom to safely run.
+  if (mode === "span") {
+    const freeGb = getFreeGb(req.app.locals.JOBS_DIR);
+    if (freeGb < DISK_REJECT_GB) {
+      return res.status(503).json({
+        error: "Large generations are temporarily unavailable. Please try again in a few minutes.",
+        code: "CAPACITY_UNAVAILABLE",
+      });
+    }
+  }
 
   const jobId = newJobId();
   const jobDir = path.join(req.app.locals.JOBS_DIR, jobId);
@@ -212,6 +234,7 @@ router.post("/jobs", (req, res) => {
       metaPath,
       rangeLow,
       rangeHigh,
+      diskHaltGb: DISK_HALT_GB,
     },
   });
 
@@ -233,6 +256,8 @@ router.post("/jobs", (req, res) => {
     } else if (msg.type === "error") {
       job.state = "error";
       job.error = msg.error || "Unknown worker error";
+      job.errorCode = msg.errorCode ?? null;
+      if (msg.available != null) job.available = msg.available;
       job.worker = null;
     }
   });
@@ -291,6 +316,7 @@ router.get("/jobs/:jobId/status", (req, res) => {
     count: job.count,
     available: job.available ?? 0,
     error: job.error,
+    errorCode: job.errorCode ?? null,
   });
 });
 

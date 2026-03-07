@@ -6,6 +6,7 @@ import { useVoicingsQuery } from "./hooks/useVoicingsQuery";
 import KeyboardPanel from "./components/piano/KeyboardPanel";
 import VoicingsResults from "./components/voicings/VoicingResults";
 import Pagination from "./components/Pagination";
+import { WarningBanner, ErrorBanner, HaltedBanner } from "./components/StatusBanners";
 
 function fmt(n) {
   return n?.toLocaleString() ?? "0";
@@ -20,6 +21,8 @@ export default function App() {
     loading,
     pageLoading,
     error,
+    warning,
+    isHalted,
     generate,
     goToPage,
     currentPage,
@@ -63,7 +66,14 @@ export default function App() {
           }
         />
 
-        {error && <div className="mt-4 text-red-300">{error}</div>}
+        {/* Banners — only one shown at a time, in priority order */}
+        {error && <ErrorBanner>{error}</ErrorBanner>}
+        {isHalted && !error && (
+          <HaltedBanner available={results?.available ?? 0} />
+        )}
+        {warning && !isHalted && !error && (
+          <WarningBanner>{warning}</WarningBanner>
+        )}
 
         {results && (
           <div className="mt-6 space-y-3">

@@ -6,6 +6,7 @@ import {
   cancelVoicingsJob,
   cancelVoicingsJobOnUnload,
 } from "../lib/api";
+import { estimateVoicings, SPAN_MODE_THRESHOLD } from "../lib/voicingEstimate";
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -13,16 +14,11 @@ function sleep(ms) {
 
 export function useVoicingsQuery() {
   const [results, setResults] = useState(null);
-  // results shape:
-  // {
-  //   jobId, voicings, n, offset, limit, count, available, state
-  // }
-  // `available` is the safe paging ceiling (advances per completed span for
-  // span mode; equals count for standard mode once done).
-
   const [loading, setLoading] = useState(false);
   const [pageLoading, setPageLoading] = useState(false);
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
+  const [isHalted, setIsHalted] = useState(false);
 
   const jobIdRef = useRef(null);
   const canceledRef = useRef(false);
@@ -84,6 +80,18 @@ export function useVoicingsQuery() {
     setPageLoading(false);
     setError("");
     setResults(null);
+    setIsHalted(false);
+
+    // Warn immediately if this chord will trigger span-mode generation.
+    const estimate = estimateVoicings(activeNotes, rangeLow, rangeHigh);
+    if (estimate >= SPAN_MODE_THRESHOLD) {
+      setWarning(
+        `This chord has an estimated 50M+ candidate voicings. Generation may take several minutes, ` +
+        `and could be halted under high server load.`
+      );
+    } else {
+      setWarning("");
+    }
 
     await new Promise(requestAnimationFrame);
 
@@ -106,6 +114,13 @@ export function useVoicingsQuery() {
         lastStatus = status;
 
         if (status.state === "error") {
+          if (status.errorCode === "HALTED_LOW_DISK") {
+            // Keep whatever results were committed — they're safe to browse.
+            setIsHalted(true);
+            setWarning("");
+            setResults((prev) => (prev ? { ...prev, state: "halted" } : null));
+            return;
+          }
           throw new Error(status.error || "Job failed");
         }
 
@@ -172,6 +187,7 @@ export function useVoicingsQuery() {
           };
         });
       }
+      setWarning("");
     } catch (e) {
       setError(e?.message || "Failed to generate voicings");
       setResults(null);
@@ -240,6 +256,8 @@ export function useVoicingsQuery() {
     loading,
     pageLoading,
     error,
+    warning,
+    isHalted,
     generate,
     clear,
     nextPage,
