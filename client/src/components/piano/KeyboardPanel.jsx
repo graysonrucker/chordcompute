@@ -2,6 +2,7 @@ import Piano from "./Piano";
 import FitToWidth from "../FitToWidth";
 import KeyboardSideControls from "./PianoSideControls";
 import { WHITE_W } from "../../lib/pianoLayout";
+import { detectChord } from "../../lib/detectChord";
 
 export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
   // 7 white keys per octave
@@ -10,6 +11,8 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
 
   // Only allow upscaling for large spans
   const allowUpscale = octaveCount >= 6;
+
+  const chordName = detectChord(notes.activeNotes, true);
 
   return (
     <>
@@ -51,14 +54,21 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
         </div>
       </div>
 
-      <button
-        className="mt-4 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-60"
-        onClick={onGenerate}
-        disabled={loading || notes.activeNotes.length === 0}
-        title={notes.activeNotes.length === 0 ? "Select notes first" : ""}
-      >
-        {loading ? "Generating..." : "Generate"}
-      </button>
+      <div className="mt-4 flex justify-between items-center">
+        <button
+          className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-60"
+          onClick={onGenerate}
+          disabled={loading || notes.activeNotes.length === 0}
+          title={notes.activeNotes.length === 0 ? "Select notes first" : ""}
+        >
+          {loading ? "Generating..." : "Generate"}
+        </button>
+
+        <span className="text-2xl font-semibold text-slate-400">
+          {chordName}
+        </span>
+      </div>
+
     </>
   );
 }
