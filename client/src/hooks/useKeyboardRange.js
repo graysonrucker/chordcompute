@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 const MIDI_MIN = 21;   // A0
 const MIDI_MAX = 108;  // C8
@@ -32,6 +32,17 @@ export function useKeyboardRange() {
   const addRight = () => setRightOctaves(v => Math.min(maxRightOctaves, v + 1));
   const removeRight = () => setRightOctaves(v => Math.max(0, v - 1));
 
+  /* Expand the range (if needed) so every MIDI note in the array is visible. */
+  const ensureRange = useCallback((midiNotes) => {
+    if (!midiNotes || midiNotes.length === 0) return;
+    const minNote = Math.min(...midiNotes);
+    const maxNote = Math.max(...midiNotes);
+    const leftNeeded  = Math.max(0, Math.ceil((BASE_START - minNote) / 12));
+    const rightNeeded = Math.max(0, Math.ceil((maxNote - BASE_END) / 12));
+    setLeftOctaves(v  => Math.min(maxLeftOctaves,  Math.max(v, leftNeeded)));
+    setRightOctaves(v => Math.min(maxRightOctaves, Math.max(v, rightNeeded)));
+  }, [maxLeftOctaves, maxRightOctaves]);
+
   return {
     startMidi,
     endMidi,
@@ -43,5 +54,6 @@ export function useKeyboardRange() {
     removeLeft,
     addRight,
     removeRight,
+    ensureRange,
   };
 }

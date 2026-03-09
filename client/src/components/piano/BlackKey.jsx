@@ -1,7 +1,8 @@
-export default function BlackKey({ midi, label, active, onClick, leftPx, widthPx, heightPx }) {
+export default function BlackKey({ midi, label, active, onMouseDown, onMouseEnter, leftPx, widthPx, heightPx }) {
   return (
     <button
-      onClick={onClick}
+      onMouseDown={(e) => { e.preventDefault(); onMouseDown(); }}
+      onMouseEnter={onMouseEnter}
       className={[
         "pointer-events-auto absolute",
         "border border-black/60 text-slate-100",

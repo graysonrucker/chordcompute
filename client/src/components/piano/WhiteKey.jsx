@@ -1,7 +1,8 @@
-export default function WhiteKey({ midi, label, active, onClick, widthPx, heightPx }) {
+export default function WhiteKey({ midi, label, active, onMouseDown, onMouseEnter, widthPx, heightPx }) {
   return (
     <button
-      onClick={onClick}
+      onMouseDown={(e) => { e.preventDefault(); onMouseDown(); }}
+      onMouseEnter={onMouseEnter}
       className={[
         "relative border border-slate-300 text-slate-900",
         "flex items-end justify-center",

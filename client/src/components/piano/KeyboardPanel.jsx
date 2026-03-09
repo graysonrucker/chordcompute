@@ -4,6 +4,7 @@ import FitToWidth from "../FitToWidth";
 import KeyboardSideControls from "./PianoSideControls";
 import { WHITE_W, isWhitePc } from "../../lib/pianoLayout";
 import { detectChord } from "../../lib/detectChord";
+import ChordTemplateDrawer from "../ChordTemplateDrawer";
 
 function countWhiteKeys(startMidi, endMidi) {
   let count = 0;
@@ -16,6 +17,7 @@ function countWhiteKeys(startMidi, endMidi) {
 
 export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
   const [preferSharps, setPreferSharps] = useState(true);
+  const [templateOpen, setTemplateOpen] = useState(false);
 
   const whiteKeyCount = countWhiteKeys(range.startMidi, range.endMidi);
   const naturalWidth = whiteKeyCount * WHITE_W;
@@ -28,8 +30,25 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
     [notes.activeNotes, preferSharps]
   );
 
+  function handleTemplateApply(midiNotes) {
+    console.log("[KeyboardPanel] handleTemplateApply called with:", midiNotes);
+    console.log("[KeyboardPanel] range.ensureRange is:", typeof range.ensureRange);
+    console.log("[KeyboardPanel] notes.setActiveNotes is:", typeof notes.setActiveNotes);
+    range.ensureRange(midiNotes);
+    notes.setActiveNotes(midiNotes);
+    setTemplateOpen(false);
+    console.log("[KeyboardPanel] all done");
+  }
+
   return (
     <>
+      <ChordTemplateDrawer
+        open={templateOpen}
+        onClose={() => setTemplateOpen(false)}
+        onApply={handleTemplateApply}
+        preferSharps={preferSharps}
+      />
+
       <div className="mt-6 w-full grid grid-cols-[3.25rem_minmax(0,1fr)_3.25rem] items-start gap-2">
         {/* LEFT */}
         <div className="flex justify-center">
@@ -69,7 +88,7 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
         </div>
       </div>
 
-      {/* Controls row: generate button, chord name, ♯/♭ toggle */}
+      {/* Controls row */}
       <div className="mt-5 flex flex-wrap items-center gap-4">
         <button
           className={[
@@ -142,11 +161,30 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
           </span>
         )}
 
+        {/* Chord template trigger */}
+        <button
+          onClick={() => setTemplateOpen(true)}
+          className={[
+            "ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium",
+            "border border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700",
+            "transition-colors duration-150",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400",
+          ].join(" ")}
+          title="Build a chord from a template"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+            <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+          </svg>
+          Template
+        </button>
+
         {/* ♯ / ♭ toggle */}
         <button
           onClick={() => setPreferSharps((v) => !v)}
           className={[
-            "ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium",
+            "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium",
             "border transition-colors duration-150",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400",
             preferSharps

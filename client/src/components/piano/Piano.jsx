@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useEffect, useCallback } from "react";
 import { WHITE_W as DEFAULT_WHITE_W, BLACK_W as DEFAULT_BLACK_W, WHITE_H as DEFAULT_WHITE_H, BLACK_H as DEFAULT_BLACK_H, pcName, isWhitePc } from "../../lib/pianoLayout";
 import WhiteKey from "./WhiteKey";
 import BlackKey from "./BlackKey";
@@ -13,6 +13,34 @@ export default function Piano({
   whiteH = DEFAULT_WHITE_H,
   blackH = DEFAULT_BLACK_H,
 }) {
+  /*  Drag state is kept in a ref so key handlers always see the
+      latest value without needing re-renders on every mouse move.
+      
+      drag.current = null               → not dragging
+      drag.current = { visited: Set }   → dragging                */
+  const drag = useRef(null);
+
+  /* End drag on global mouseup / mouseleave */
+  useEffect(() => {
+    const stop = () => { drag.current = null; };
+    window.addEventListener("mouseup", stop);
+    return () => window.removeEventListener("mouseup", stop);
+  }, []);
+
+  /* Called on mousedown over a key */
+  const onKeyDown = useCallback((midi) => {
+    drag.current = { visited: new Set([midi]) };
+    toggleMidi(midi);
+  }, [toggleMidi]);
+
+  /* Called on mouseenter over a key while potentially dragging */
+  const onKeyEnter = useCallback((midi) => {
+    if (!drag.current) return;
+    if (drag.current.visited.has(midi)) return;
+    drag.current.visited.add(midi);
+    toggleMidi(midi);
+  }, [toggleMidi]);
+
   const { whites, blacks } = useMemo(() => {
     const whitesLocal = [];
     const blacksLocal = [];
@@ -30,7 +58,7 @@ export default function Piano({
     for (let m = startMidi; m <= endMidi; m++) {
       const pc = ((m % 12) + 12) % 12;
       if (!isWhitePc(pc)) {
-        const betweenMidi = m - 1; // black sits after previous white
+        const betweenMidi = m - 1;
         if (!whitePosByMidi.has(betweenMidi)) continue;
 
         const whiteIndex = whitePosByMidi.get(betweenMidi);
@@ -59,7 +87,8 @@ export default function Piano({
             midi={k.midi}
             label={k.label}
             active={isActive(k.midi)}
-            onClick={() => toggleMidi(k.midi)}
+            onMouseDown={() => onKeyDown(k.midi)}
+            onMouseEnter={() => onKeyEnter(k.midi)}
             widthPx={whiteW}
             heightPx={whiteH}
           />
@@ -74,7 +103,8 @@ export default function Piano({
             midi={bk.midi}
             label={bk.label}
             active={isActive(bk.midi)}
-            onClick={() => toggleMidi(bk.midi)}
+            onMouseDown={() => onKeyDown(bk.midi)}
+            onMouseEnter={() => onKeyEnter(bk.midi)}
             leftPx={bk.leftPx}
             widthPx={blackW}
             heightPx={blackH}
