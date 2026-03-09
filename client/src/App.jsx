@@ -17,7 +17,7 @@ function fmt(n) {
   return n?.toLocaleString() ?? "0";
 }
 
-function GeneratePage() {
+function GeneratePage({ bottomAsRoot }) {
   const range = useKeyboardRange();
   const notes = useActiveNotes([]);
 
@@ -62,6 +62,7 @@ function GeneratePage() {
         onGenerate={() =>
           generate(notes.activeNotes, range.startMidi, range.endMidi)
         }
+        bottomAsRoot={bottomAsRoot}
       />
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
@@ -122,6 +123,8 @@ function GeneratePage() {
 
 export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [bottomAsRoot, setBottomAsRoot] = useState(false);
+  const [sound, setSound] = useState("synth");
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -129,10 +132,14 @@ export default function App() {
       <SettingsDrawer
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        bottomAsRoot={bottomAsRoot}
+        setBottomAsRoot={setBottomAsRoot}
+        sound={sound}
+        setSound={setSound}
       />
 
       <Routes>
-        <Route path="/" element={<GeneratePage />} />
+        <Route path="/" element={<GeneratePage bottomAsRoot={bottomAsRoot} />} />
         <Route path="/info" element={<InfoPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

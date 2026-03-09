@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "react";
-import { buildChordMidi, SHARP_NAMES, FLAT_NAMES } from "../lib/chordTemplate";
+import { buildChordMidi, buildChordName, SHARP_NAMES, FLAT_NAMES } from "../lib/chordTemplate";
 
 /* ── Style helpers ──────────────────────────────────────── */
 
@@ -276,11 +276,9 @@ export default function ChordTemplateDrawer({ open, onClose, onApply, preferShar
           <button
             type="button"
             onClick={() => {
-              console.log("[Template] Apply clicked, previewNotes:", previewNotes);
-              console.log("[Template] onApply is:", typeof onApply);
               if (previewNotes.length > 0) {
-                onApply([...previewNotes]);
-                console.log("[Template] onApply called");
+                const name = buildChordName(rootPc, quality, seventh, extensions, alterations, omissions, names);
+                onApply([...previewNotes], name);
               }
             }}
             disabled={previewNotes.length === 0}

@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 import Piano from "./Piano";
 import FitToWidth from "../FitToWidth";
 import KeyboardSideControls from "./PianoSideControls";
 import { WHITE_W, isWhitePc } from "../../lib/pianoLayout";
 import { detectChord } from "../../lib/detectChord";
+import { playArpeggio } from "../../lib/playback";
 import ChordTemplateDrawer from "../ChordTemplateDrawer";
 
 function countWhiteKeys(startMidi, endMidi) {
@@ -15,29 +16,39 @@ function countWhiteKeys(startMidi, endMidi) {
   return count;
 }
 
-export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
+export default function KeyboardPanel({ range, notes, loading, onGenerate, bottomAsRoot }) {
   const [preferSharps, setPreferSharps] = useState(true);
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateOverride, setTemplateOverride] = useState(null);
 
   const whiteKeyCount = countWhiteKeys(range.startMidi, range.endMidi);
   const naturalWidth = whiteKeyCount * WHITE_W;
 
-  const chordName = useMemo(
-    () =>
-      notes.activeNotes.length >= 1
-        ? detectChord(notes.activeNotes, preferSharps)
-        : null,
-    [notes.activeNotes, preferSharps]
-  );
+  /* Detected chord name — uses override if set, otherwise runs algorithm */
+  const chordName = useMemo(() => {
+    if (notes.activeNotes.length === 0) return null;
+    if (templateOverride) return templateOverride;
+    return detectChord(notes.activeNotes, preferSharps, bottomAsRoot);
+  }, [notes.activeNotes, preferSharps, bottomAsRoot, templateOverride]);
 
-  function handleTemplateApply(midiNotes) {
-    console.log("[KeyboardPanel] handleTemplateApply called with:", midiNotes);
-    console.log("[KeyboardPanel] range.ensureRange is:", typeof range.ensureRange);
-    console.log("[KeyboardPanel] notes.setActiveNotes is:", typeof notes.setActiveNotes);
+  /* Wrap toggleMidi to clear template override on manual note changes */
+  const handleToggleMidi = useCallback((midi) => {
+    setTemplateOverride(null);
+    notes.toggleMidi(midi);
+  }, [notes.toggleMidi]);
+
+  /* Wrap clear to also clear override */
+  function handleClear() {
+    setTemplateOverride(null);
+    notes.clear();
+  }
+
+  /* Template apply — set notes, name override, and expand range */
+  function handleTemplateApply(midiNotes, chordName) {
     range.ensureRange(midiNotes);
     notes.setActiveNotes(midiNotes);
+    setTemplateOverride(chordName);
     setTemplateOpen(false);
-    console.log("[KeyboardPanel] all done");
   }
 
   return (
@@ -70,7 +81,7 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
           >
             <Piano
               isActive={notes.isActive}
-              toggleMidi={notes.toggleMidi}
+              toggleMidi={handleToggleMidi}
               startMidi={range.startMidi}
               endMidi={range.endMidi}
             />
@@ -130,7 +141,7 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
 
         {/* Reset button */}
         <button
-          onClick={notes.clear}
+          onClick={handleClear}
           disabled={notes.activeNotes.length === 0}
           className={[
             "inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-sm font-medium",
@@ -148,6 +159,27 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
             <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
           Reset
+        </button>
+
+        {/* Play button */}
+        <button
+          onClick={() => playArpeggio(notes.activeNotes)}
+          disabled={notes.activeNotes.length === 0}
+          className={[
+            "inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-sm font-medium",
+            "border transition-all duration-150",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400",
+            notes.activeNotes.length === 0
+              ? "border-slate-800 bg-slate-900 text-slate-600 cursor-not-allowed"
+              : "border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-slate-100 active:scale-[0.97]",
+          ].join(" ")}
+          title="Play selected notes"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+            fill="currentColor" stroke="none">
+            <polygon points="6,3 20,12 6,21" />
+          </svg>
+          Play
         </button>
 
         {/* Chord name display */}

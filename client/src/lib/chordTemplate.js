@@ -75,7 +75,7 @@ export function buildChordMidi(
     "ninth", "eleventh", "thirteenth",
   ];
 
-  const baseMidi = 60 + rootPc; // root in octave 4
+  const baseMidi = 48 + rootPc; // root in octave 3 (base range start)
   const notes = [];
   let lastMidi = -Infinity;
 
@@ -94,3 +94,71 @@ export function buildChordMidi(
 /* Note names for UI display */
 export const SHARP_NAMES = ["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
 export const FLAT_NAMES  = ["C","D♭","D","E♭","E","F","G♭","G","A♭","A","B♭","B"];
+
+/* ── Build a display name directly from template params ── */
+
+const QUAL_SYM = { major:"", minor:"m", dim:"dim", aug:"aug", sus2:"sus2", sus4:"sus4" };
+const ALT_SYM  = { b5:"♭5", "#5":"♯5", b9:"♭9", "#9":"♯9", "#11":"♯11", b13:"♭13" };
+
+/**
+ * Generates the canonical chord symbol from template selections.
+ * This is authoritative — it's what the user asked for, regardless
+ * of what the heuristic detector might call the same set of notes.
+ */
+export function buildChordName(rootPc, quality, seventh, extensions, alterations, omissions, names) {
+  const root = names[rootPc];
+  const qSym = QUAL_SYM[quality] ?? "";
+
+  const extSet = new Set(extensions);
+  const isMajSev = seventh === "maj7";
+  const isDimSev = seventh === "dim7";
+  const isMinor  = quality === "minor";
+
+  /* Determine highest stacked extension.
+     Even without 9, 11th/13th name the chord (with "no9" annotation). */
+  let baseSym = "";
+  const parens = [];
+
+  if (seventh === "none") {
+    baseSym = "";
+    if (extSet.has("9"))  parens.push("add9");
+    if (extSet.has("11")) parens.push("add11");
+    if (extSet.has("13")) parens.push("add13");
+  } else {
+    const has9 = extSet.has("9"), has11 = extSet.has("11"), has13 = extSet.has("13");
+    let sevPrefix = isMajSev ? "maj" : (isDimSev ? "dim" : "");
+    if (isMinor && isMajSev) sevPrefix = "mMaj";
+
+    if (has13) {
+      baseSym = sevPrefix + "13";
+      if (has11) parens.push("11");
+      if (!has9) parens.push("no9");
+    } else if (has11) {
+      baseSym = sevPrefix + "11";
+      if (!has9) parens.push("no9");
+    } else if (has9) {
+      baseSym = sevPrefix + "9";
+    } else {
+      baseSym = sevPrefix + "7";
+    }
+
+    /* For dim quality + dim seventh, avoid "dimdim7" → just "dim7" */
+    if (quality === "dim" && isDimSev) {
+      baseSym = baseSym.replace(/^dim/, "");
+    }
+  }
+
+  /* Alterations */
+  for (const a of alterations) {
+    parens.push(ALT_SYM[a] ?? a);
+  }
+
+  /* Omissions */
+  for (const o of omissions) {
+    parens.push(o);
+  }
+
+  const useQSym = (isMinor && isMajSev) ? "" : qSym;
+  const suffix = parens.length > 0 ? `(${parens.join(",")})` : "";
+  return `${root}${useQSym}${baseSym}${suffix}`;
+}

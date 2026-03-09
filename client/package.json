@@ -14,6 +14,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.6.1",
+    "tone": "^15.0.4",
     "react-virtualized-auto-sizer": "^2.0.3",
     "react-window": "^2.2.7",
     "tonal": "^6.4.3"

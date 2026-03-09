@@ -133,13 +133,14 @@ function nameExtension(iv, tmplSet, has7th) {
 /* Preferred ordering for extension display: additions first, then "no" */
 const EXT_ORDER = [10, 11, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
-function detectChordName(pcs, names) {
+function detectChordName(pcs, names, forceRootPc) {
   const pcArr = [...new Set(pcs)].sort((a, b) => a - b);
   if (pcArr.length === 0) return null;
 
+  const rootCandidates = forceRootPc != null ? [forceRootPc] : pcArr;
   let best = null;
 
-  for (const root of pcArr) {
+  for (const root of rootCandidates) {
     const intervals = new Set();
     for (const pc of pcArr) intervals.add((pc - root + 12) % 12);
     intervals.delete(0);
@@ -178,7 +179,9 @@ function detectChordName(pcs, names) {
   return `${rootName}${best.sym}${suffix}`;
 }
 
-export function detectChord(midiNotes, preferSharps) {
+/* ── Public API ────────────────────────────────────────── */
+
+export function detectChord(midiNotes, preferSharps, bottomAsRoot = false) {
   if (!midiNotes || midiNotes.length === 0) return null;
 
   const names = preferSharps ? SHARP : FLAT;
@@ -210,5 +213,10 @@ export function detectChord(midiNotes, preferSharps) {
     return formatInterval([first, second], names);
   }
 
-  return detectChordName(pcs, names);
+  // When bottomAsRoot is on, force the lowest note's pitch class as root
+  const forceRootPc = bottomAsRoot
+    ? ((Math.min(...midiNotes) % 12) + 12) % 12
+    : undefined;
+
+  return detectChordName(pcs, names, forceRootPc);
 }
