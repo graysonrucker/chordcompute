@@ -49,11 +49,17 @@ export default function VoicingCard({ voicing, index }) {
     [activeSet, shift]
   );
 
+  const range = notesArr[notesArr.length - 1] - notesArr[0] + 1;
+
   return (
-    
-    <div className="rounded-xl bg-slate-900/60 border border-slate-800 p-3">
-      <div className="text-sm text-slate-300">
-        #{index + 1} • range: {notesArr[notesArr.length-1] - notesArr[0] + 1}
+    <div className="animate-fade-in-up rounded-xl bg-slate-900/60 border border-slate-800/80 p-3 hover:border-slate-700/60 transition-colors duration-200">
+      <div className="flex items-baseline gap-2 text-sm">
+        <span className="font-mono text-slate-500 text-xs tabular-nums">
+          #{index + 1}
+        </span>
+        <span className="text-slate-400">
+          range: <span className="text-slate-300 font-medium">{range}</span>
+        </span>
       </div>
 
       <div className="mt-3">

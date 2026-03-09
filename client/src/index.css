@@ -1,7 +1,45 @@
 @import "tailwindcss";
 
-/*prevents vertical vertical scrollbar popping*/
+/*prevents vertical scrollbar popping*/
 html, body, #root {
   width: 100%;
   overflow-x: hidden;
 }
+
+/* ── Spinner for generate button ── */
+@keyframes spin-smooth {
+  to { transform: rotate(360deg); }
+}
+.animate-spin-smooth {
+  animation: spin-smooth 0.7s linear infinite;
+}
+
+/* ── Fade-in-up for cards and banners ── */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.3s ease-out both;
+}
+
+/* ── Subtle shimmer for streaming indicator ── */
+@keyframes shimmer {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+.animate-shimmer {
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* ── Stagger delays for voicing cards ── */
+.stagger-1 { animation-delay: 0.03s; }
+.stagger-2 { animation-delay: 0.06s; }
+.stagger-3 { animation-delay: 0.09s; }
+.stagger-4 { animation-delay: 0.12s; }

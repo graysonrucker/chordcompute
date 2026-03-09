@@ -42,6 +42,9 @@ export default function FitToWidth({
     return Math.min(maxScale, raw);
   }, [containerWidth, contentWidth, allowUpscale, maxScale]);
 
+  // Compute scaled height so the outer wrapper animates its space smoothly
+  const scaledHeight = contentWidth > 0 ? undefined : undefined; // let content define
+
   return (
     <div ref={outerRef} className="w-full overflow-hidden">
       <div
@@ -49,7 +52,7 @@ export default function FitToWidth({
         style={{
           transform: `scale(${scale})`,
           transformOrigin: "top center",
-          transition: `transform ${durationMs}ms ease`,
+          transition: `transform ${durationMs}ms cubic-bezier(0.4, 0, 0.2, 1)`,
         }}
       >
         <div className="inline-block">{children}</div>

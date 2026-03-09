@@ -74,16 +74,16 @@ export default function Pagination({
   const tokens = buildTokens(currentPage, totalPages);
 
   const btnBase =
-    "relative inline-flex items-center justify-center min-w-[2rem] h-8 px-2 rounded text-sm font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500";
+    "relative inline-flex items-center justify-center min-w-[2rem] h-8 px-2 rounded-md text-sm font-medium transition-all duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400";
 
   const btnActive =
-    "bg-blue-600 text-white shadow-inner shadow-blue-900/40";
+    "bg-cyan-600 text-white shadow-md shadow-cyan-900/30";
 
   const btnIdle =
-    "bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-slate-100";
+    "bg-slate-800/80 text-slate-300 border border-slate-700/40 hover:bg-slate-700 hover:text-slate-100 hover:border-slate-600/50";
 
   const btnDisabled =
-    "opacity-40 cursor-not-allowed";
+    "opacity-35 cursor-not-allowed pointer-events-none";
 
   return (
     <nav
@@ -141,7 +141,7 @@ export default function Pagination({
       {/* Streaming indicator — pulsing "…" after last available page */}
       {isStreaming && (
         <span
-          className="inline-flex items-center justify-center min-w-[1.5rem] h-8 text-slate-400 text-sm animate-pulse select-none"
+          className="inline-flex items-center justify-center min-w-[1.5rem] h-8 text-cyan-400 text-sm animate-shimmer select-none"
           title="More pages being generated…"
           aria-label="More pages loading"
         >
