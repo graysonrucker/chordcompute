@@ -5,18 +5,20 @@
      - "synth"  → built-in PolySynth (instant, no downloads)
      - "piano"  → Salamander Grand Piano samples
 
-   Lazily initializes on first play. The piano sampler
-   loads asynchronously; if not ready, falls back to synth.
+   The Tone import and sample loading happen eagerly (no
+   user gesture needed). Only Tone.start() — which resumes
+   the AudioContext — requires a gesture and is deferred
+   to the first play call.
    ──────────────────────────────────────────────────────── */
 
 let Tone = null;
-let toneReady = false;
-let toneLoading = false;
+let toneImported = false;
+let toneImporting = false;
+let contextStarted = false;
 
 /* Instrument registry */
 const instruments = {};
 let activeInstrument = "synth";
-let onLoadCallbacks = [];
 
 const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 
@@ -26,28 +28,52 @@ function midiToNoteName(midi) {
   return `${NOTE_NAMES[pc]}${oct}`;
 }
 
-/* ── Tone.js bootstrap ─────────────────────────────────── */
+/* ── Listeners ─────────────────────────────────────────── */
 
-async function ensureTone() {
-  if (toneReady) return true;
-  if (toneLoading) {
-    return new Promise((resolve) => {
-      onLoadCallbacks.push(resolve);
-    });
-  }
-  toneLoading = true;
+const listeners = new Set();
+
+export function onLoadChange(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+function notifyListeners() {
+  for (const fn of listeners) fn();
+}
+
+/* ── Tone import (no gesture required) ─────────────────── */
+
+let importPromise = null;
+
+async function ensureToneImported() {
+  if (toneImported) return true;
+  if (importPromise) return importPromise;
+
+  importPromise = (async () => {
+    toneImporting = true;
+    try {
+      Tone = await import("tone");
+      toneImported = true;
+      return true;
+    } catch (err) {
+      console.error("Tone.js import failed:", err);
+      toneImporting = false;
+      return false;
+    }
+  })();
+  return importPromise;
+}
+
+/* AudioContext resume — needs user gesture, called at play time */
+async function ensureContextStarted() {
+  if (contextStarted) return true;
+  if (!toneImported || !Tone) return false;
   try {
-    Tone = await import("tone");
     await Tone.start();
-    toneReady = true;
-    onLoadCallbacks.forEach((cb) => cb(true));
-    onLoadCallbacks = [];
+    contextStarted = true;
     return true;
   } catch (err) {
-    console.error("Tone.js init failed:", err);
-    toneLoading = false;
-    onLoadCallbacks.forEach((cb) => cb(false));
-    onLoadCallbacks = [];
+    console.error("Tone.start() failed:", err);
     return false;
   }
 }
@@ -77,8 +103,6 @@ function getSynth() {
 
 const PIANO_BASE_URL = "https://tonejs.github.io/audio/salamander/";
 
-/* We only sample every 3rd note for faster loading — Tone.Sampler
-   interpolates the rest. This covers the full 88-key range.       */
 const PIANO_SAMPLES = {
   A0: "A0.mp3", C1: "C1.mp3", "D#1": "Ds1.mp3",
   "F#1": "Fs1.mp3", A1: "A1.mp3", C2: "C2.mp3",
@@ -94,35 +118,36 @@ const PIANO_SAMPLES = {
 
 let pianoLoading = false;
 let pianoReady = false;
-let pianoCallbacks = [];
+let pianoPromise = null;
 
 function loadPiano() {
   if (pianoReady) return Promise.resolve(true);
-  if (pianoLoading) {
-    return new Promise((resolve) => pianoCallbacks.push(resolve));
-  }
-  pianoLoading = true;
+  if (pianoPromise) return pianoPromise;
 
-  return new Promise((resolve) => {
+  pianoLoading = true;
+  notifyListeners();
+
+  pianoPromise = new Promise((resolve) => {
     instruments.piano = new Tone.Sampler({
       urls: PIANO_SAMPLES,
       baseUrl: PIANO_BASE_URL,
       release: 1.5,
       onload: () => {
         pianoReady = true;
-        pianoCallbacks.forEach((cb) => cb(true));
-        pianoCallbacks = [];
+        pianoLoading = false;
+        notifyListeners();
         resolve(true);
       },
       onerror: (err) => {
         console.error("Piano samples failed to load:", err);
         pianoLoading = false;
-        pianoCallbacks.forEach((cb) => cb(false));
-        pianoCallbacks = [];
+        pianoPromise = null;
+        notifyListeners();
         resolve(false);
       },
     }).toDestination();
   });
+  return pianoPromise;
 }
 
 /* ── Instrument management ─────────────────────────────── */
@@ -130,7 +155,6 @@ function loadPiano() {
 async function getInstrument() {
   if (activeInstrument === "piano") {
     if (pianoReady && instruments.piano) return instruments.piano;
-    // Start loading in background, fall back to synth for now
     loadPiano();
     return getSynth();
   }
@@ -138,54 +162,72 @@ async function getInstrument() {
 }
 
 /**
- * Switch the active instrument.
- * @param {"synth"|"piano"} name
+ * Switch the active instrument and begin preloading.
+ * Can be called before any user gesture — sample loading
+ * doesn't need the AudioContext to be running.
  */
 export async function setInstrument(name) {
   activeInstrument = name;
-  if (name === "piano") {
-    const ok = await ensureTone();
-    if (ok) loadPiano(); // preload
-  }
+  const ok = await ensureToneImported();
+  if (!ok) return;
+  if (name === "piano") loadPiano();
 }
 
-/**
- * @returns {"synth"|"piano"}
- */
 export function getActiveInstrument() {
   return activeInstrument;
 }
 
-/**
- * @returns {boolean}
- */
 export function isPianoLoaded() {
   return pianoReady;
 }
 
+export function isPianoLoading() {
+  return pianoLoading && !pianoReady;
+}
+
+export function isReady() {
+  if (activeInstrument === "synth") return toneImported;
+  return pianoReady;
+}
+
+let playing = false;
+let playingTimer = null;
+
+export function isPlaying() {
+  return playing;
+}
+
+function setPlaying(durationSec) {
+  if (playingTimer) clearTimeout(playingTimer);
+  playing = true;
+  notifyListeners();
+  playingTimer = setTimeout(() => {
+    playing = false;
+    playingTimer = null;
+    notifyListeners();
+  }, durationSec * 1000);
+}
+
 /* ── Playback functions ────────────────────────────────── */
 
-/**
- * Play a set of MIDI notes as a chord.
- */
 export async function playChord(midiNotes, durationSec = 1.5) {
   if (!midiNotes || midiNotes.length === 0) return;
-  const ok = await ensureTone();
+  const ok = await ensureToneImported();
   if (!ok) return;
+  await ensureContextStarted();
 
   const inst = await getInstrument();
   const noteNames = midiNotes.map(midiToNoteName);
   const now = Tone.now();
   inst.triggerAttackRelease(noteNames, durationSec, now);
+  setPlaying(durationSec);
 }
 
-/**
- * Play notes as an arpeggio (bottom to top), then sustain the full chord.
- */
 export async function playArpeggio(midiNotes, staggerSec = 0.08, holdSec = 1.2) {
   if (!midiNotes || midiNotes.length === 0) return;
-  const ok = await ensureTone();
+  const ok = await ensureToneImported();
   if (!ok) return;
+  await ensureContextStarted();
 
   const inst = await getInstrument();
   const sorted = [...midiNotes].sort((a, b) => a - b);
@@ -198,4 +240,5 @@ export async function playArpeggio(midiNotes, staggerSec = 0.08, holdSec = 1.2) 
     const dur = totalStagger - i * staggerSec + holdSec;
     inst.triggerAttackRelease(note, dur, onset);
   });
+  setPlaying(totalStagger + holdSec);
 }

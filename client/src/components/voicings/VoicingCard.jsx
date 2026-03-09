@@ -4,6 +4,7 @@ import FitToWidth from "../FitToWidth";
 import { computeExpandedRange } from "../../lib/pianoRange";
 import { keyDimensions } from "../../lib/pianoLayout";
 import { playArpeggio } from "../../lib/playback";
+import { useSoundReady } from "../../hooks/useSoundReady";
 
 const UI_CENTER = 60; // C4. Change if your UI wants a different "home".
 
@@ -26,6 +27,7 @@ function shiftToUiCenterByOctave(notes, uiCenter = UI_CENTER) {
 
 export default function VoicingCard({ voicing, index }) {
   const notesArr = voicing.notes;
+  const { playing } = useSoundReady();
 
   // 1) compute a display-shifted version ONLY for range/layout
   const { shiftedNotes, shift } = useMemo(
@@ -63,8 +65,14 @@ export default function VoicingCard({ voicing, index }) {
         </span>
         <button
           onClick={() => playArpeggio(notesArr)}
-          className="ml-auto inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors duration-150"
-          title="Play voicing"
+          disabled={playing}
+          className={[
+            "ml-auto inline-flex items-center justify-center w-7 h-7 rounded-md transition-colors duration-150",
+            playing
+              ? "text-slate-700 cursor-not-allowed"
+              : "text-slate-500 hover:text-slate-200 hover:bg-slate-800",
+          ].join(" ")}
+          title={playing ? "Playing…" : "Play voicing"}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
             fill="currentColor" stroke="none">

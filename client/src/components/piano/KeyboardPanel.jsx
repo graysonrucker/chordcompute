@@ -5,6 +5,7 @@ import KeyboardSideControls from "./PianoSideControls";
 import { WHITE_W, isWhitePc } from "../../lib/pianoLayout";
 import { detectChord } from "../../lib/detectChord";
 import { playArpeggio } from "../../lib/playback";
+import { useSoundReady } from "../../hooks/useSoundReady";
 import ChordTemplateDrawer from "../ChordTemplateDrawer";
 
 function countWhiteKeys(startMidi, endMidi) {
@@ -20,6 +21,7 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate, botto
   const [preferSharps, setPreferSharps] = useState(true);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [templateOverride, setTemplateOverride] = useState(null);
+  const { ready: soundReady, loading: soundLoading, playing: soundPlaying } = useSoundReady();
 
   const whiteKeyCount = countWhiteKeys(range.startMidi, range.endMidi);
   const naturalWidth = whiteKeyCount * WHITE_W;
@@ -162,25 +164,40 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate, botto
         </button>
 
         {/* Play button */}
-        <button
-          onClick={() => playArpeggio(notes.activeNotes)}
-          disabled={notes.activeNotes.length === 0}
-          className={[
-            "inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-sm font-medium",
-            "border transition-all duration-150",
-            "focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400",
-            notes.activeNotes.length === 0
-              ? "border-slate-800 bg-slate-900 text-slate-600 cursor-not-allowed"
-              : "border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-slate-100 active:scale-[0.97]",
-          ].join(" ")}
-          title="Play selected notes"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
-            fill="currentColor" stroke="none">
-            <polygon points="6,3 20,12 6,21" />
-          </svg>
-          Play
-        </button>
+        {soundLoading ? (
+          <span className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-800 bg-slate-900 text-slate-500">
+            <svg
+              className="animate-spin-smooth h-3.5 w-3.5 text-slate-500"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z" />
+            </svg>
+            Loading sounds…
+          </span>
+        ) : (
+          <button
+            onClick={() => playArpeggio(notes.activeNotes)}
+            disabled={notes.activeNotes.length === 0 || soundPlaying}
+            className={[
+              "inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-sm font-medium",
+              "border transition-all duration-150",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400",
+              notes.activeNotes.length === 0 || soundPlaying
+                ? "border-slate-800 bg-slate-900 text-slate-600 cursor-not-allowed"
+                : "border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-slate-100 active:scale-[0.97]",
+            ].join(" ")}
+            title={soundPlaying ? "Playing…" : "Play selected notes"}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+              fill="currentColor" stroke="none">
+              <polygon points="6,3 20,12 6,21" />
+            </svg>
+            {soundPlaying ? "Playing…" : "Play"}
+          </button>
+        )}
 
         {/* Chord name display */}
         {notes.activeNotes.length >= 1 && (

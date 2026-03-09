@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useKeyboardRange } from "./hooks/useKeyboardRange";
 import { useActiveNotes } from "./hooks/useActiveNotes";
 import { useVoicingsQuery } from "./hooks/useVoicingsQuery";
+import { setInstrument } from "./lib/playback";
 
 import NavBar from "./components/NavBar";
 import KeyboardPanel from "./components/piano/KeyboardPanel";
@@ -123,8 +124,11 @@ function GeneratePage({ bottomAsRoot }) {
 
 export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [bottomAsRoot, setBottomAsRoot] = useState(false);
-  const [sound, setSound] = useState("synth");
+  const [bottomAsRoot, setBottomAsRoot] = useState(true);
+  const [sound, setSound] = useState("piano");
+
+  // Preload the default instrument
+  useEffect(() => { setInstrument(sound); }, []);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">

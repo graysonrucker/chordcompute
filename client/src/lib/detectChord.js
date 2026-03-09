@@ -52,10 +52,14 @@ function formatInterval(midiArr, names) {
 const TEMPLATES = [
   // ── 13th chords ──
   { iv: [4,7,10,2,9],  opt: [2],    sym: "13",       cost: 4 },
+  { iv: [4,7,11,2,9],  opt: [2],    sym: "maj13",    cost: 4 },
   { iv: [3,7,10,2,9],  opt: [2],    sym: "m13",      cost: 4 },
+  { iv: [3,7,11,2,9],  opt: [2],    sym: "mMaj13",   cost: 4 },
   // ── 11th chords ──
   { iv: [3,7,10,2,5],  opt: [2],    sym: "m11",      cost: 4 },
   { iv: [4,7,10,2,5],  opt: [2],    sym: "11",       cost: 4 },
+  { iv: [4,7,11,2,5],  opt: [2],    sym: "maj11",    cost: 4 },
+  { iv: [3,7,11,2,5],  opt: [2],    sym: "mMaj11",   cost: 4 },
   // ── 9th chords ──
   { iv: [4,7,10,2],    opt: [],     sym: "9",        cost: 3 },
   { iv: [4,7,11,2],    opt: [],     sym: "maj9",     cost: 3 },
