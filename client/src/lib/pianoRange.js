@@ -1,6 +1,6 @@
 import { WHITE_W } from "./pianoLayout";
 
-const BASE_START = 60; // C4
+const BASE_START = 48; // C3
 const BASE_END = 71; //B4
 
 export function makeIsActiveFromNotes(noteList){
@@ -18,7 +18,7 @@ export function computeResultRange(voicingNotes){
     const startMidi = BASE_START - leftOctaves * 12;
     const endMidi = BASE_END + rightOctaves * 12;
     
-    const octaveCount = 1 + leftOctaves + rightOctaves;
+    const octaveCount = 2 + leftOctaves + rightOctaves;
     const naturalWidth = octaveCount * 7 * WHITE_W;
     
     return { startMidi, endMidi, naturalWidth };

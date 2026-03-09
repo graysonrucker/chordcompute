@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 
 const MIDI_MIN = 21;   // A0
 const MIDI_MAX = 108;  // C8
-const BASE_START = 60; // C4
+const BASE_START = 48; // C3
 const BASE_END = 71;   // B4
 
 export function useKeyboardRange() {

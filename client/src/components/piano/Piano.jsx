@@ -6,7 +6,7 @@ import BlackKey from "./BlackKey";
 export default function Piano({
   isActive,
   toggleMidi,
-  startMidi = 60, // C4
+  startMidi = 48, // C3
   endMidi = 71,   // B4
   whiteW = DEFAULT_WHITE_W,
   blackW = DEFAULT_BLACK_W,

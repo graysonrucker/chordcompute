@@ -38,7 +38,7 @@ export default function VoicingCard({ voicing, index }) {
     [shiftedNotes]
   );
 
-  const octaveCount = 1 + leftOctaves + rightOctaves;
+  const octaveCount = 2 + leftOctaves + rightOctaves;
   const { whiteW, blackW, whiteH, blackH } = keyDimensions(octaveCount);
   const naturalWidth = octaveCount * 7 * whiteW;
 
