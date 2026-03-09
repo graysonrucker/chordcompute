@@ -29,20 +29,22 @@ app.get("/api/health", (req, res) => {
       freeGb: isFinite(freeGb) ? parseFloat(freeGb.toFixed(2)) : null,
       freeFormatted: formatGb(freeGb),
       rejectThresholdGb: parseFloat(process.env.DISK_REJECT_GB ?? "60"),
-      haltThresholdGb:   parseFloat(process.env.DISK_HALT_GB   ?? "30"),
+      haltThresholdGb: parseFloat(process.env.DISK_HALT_GB ?? "30"),
     },
   });
 });
 
 app.use("/api/voicings", voicingRoutes);
 
-// Serve built React files
-app.use(express.static(path.join(__dirname, "public")));
+// Only serve frontend from Express when NOT in production
+if (process.env.NODE_ENV !== "production") {
+  app.use(express.static(path.join(__dirname, "public")));
 
-// SPA fallback
-app.get(/.*/, (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
+  // SPA fallback
+  app.get(/.*/, (req, res) => {
+    res.sendFile(path.join(__dirname, "public", "index.html"));
+  });
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
