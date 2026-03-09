@@ -5,9 +5,6 @@ services:
       - "4000:3000"  
     environment:
       - NODE_ENV=production
-      - DB_PATH=/app/server/data/inverter.sqlite
-    volumes:
-      - inverter_data:/app/server/data
 
 volumes:
   inverter_data:
