@@ -2,7 +2,6 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
-const { db, initialize } = require("./database");
 
 const voicingRoutes = require("./routes/voicings");
 
@@ -32,20 +31,6 @@ app.get("/api/health", (req, res) => {
       rejectThresholdGb: parseFloat(process.env.DISK_REJECT_GB ?? "60"),
       haltThresholdGb:   parseFloat(process.env.DISK_HALT_GB   ?? "30"),
     },
-  });
-});
-
-app.get("/api/notes", (req, res) => {
-  db.all("SELECT * FROM notes", (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
-});
-
-app.get("/api/chord-types", (req, res) => {
-  db.all("SELECT * FROM chord_types", (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
   });
 });
 
