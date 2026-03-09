@@ -3,6 +3,24 @@ export const BLACK_W = 40;
 export const WHITE_H = 220;
 export const BLACK_H = 140;
 
+export function keyDimensions(octaveCount) {
+  const maxW = 64;
+  const minW = 28;
+
+  const whiteW = octaveCount <= 3
+    ? maxW
+    : Math.round(maxW - (maxW - minW) * (Math.min(octaveCount, 7) - 3) / 4);
+
+  const scale = whiteW / maxW;
+
+  return {
+    whiteW,
+    blackW: Math.round(40 * scale),
+    whiteH: Math.round(220 * scale),
+    blackH: Math.round(140 * scale),
+  };
+}
+
 export const NOTE_NAMES = [
   "C", "C#", "D", "D#", "E",
   "F", "F#", "G", "G#", "A", "A#", "B",

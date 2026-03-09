@@ -1,18 +1,20 @@
 import Piano from "./Piano";
 import FitToWidth from "../FitToWidth";
 import KeyboardSideControls from "./PianoSideControls";
-import { WHITE_W } from "../../lib/pianoLayout";
-import { detectChord } from "../../lib/detectChord";
+import { WHITE_W, isWhitePc } from "../../lib/pianoLayout";
+
+function countWhiteKeys(startMidi, endMidi) {
+  let count = 0;
+  for (let m = startMidi; m <= endMidi; m++) {
+    const pc = ((m % 12) + 12) % 12;
+    if (isWhitePc(pc)) count++;
+  }
+  return count;
+}
 
 export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
-  // 7 white keys per octave
-  const octaveCount = 1 + range.leftOctaves + range.rightOctaves;
-  const naturalWidth = octaveCount * 7 * WHITE_W;
-
-  // Only allow upscaling for large spans
-  const allowUpscale = octaveCount >= 6;
-
-  const chordName = detectChord(notes.activeNotes, true);
+  const whiteKeyCount = countWhiteKeys(range.startMidi, range.endMidi);
+  const naturalWidth = whiteKeyCount * WHITE_W;
 
   return (
     <>
@@ -31,8 +33,8 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
         <div className="min-w-0">
           <FitToWidth
             contentWidth={naturalWidth}
-            allowUpscale={allowUpscale}
-            maxScale={1.6}
+            allowUpscale={countWhiteKeys(range.startMidi, range.endMidi) >= 21}
+            maxScale={5}
           >
             <Piano
               isActive={notes.isActive}
@@ -54,21 +56,14 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
         </div>
       </div>
 
-      <div className="mt-4 flex justify-between items-center">
-        <button
-          className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-60"
-          onClick={onGenerate}
-          disabled={loading || notes.activeNotes.length === 0}
-          title={notes.activeNotes.length === 0 ? "Select notes first" : ""}
-        >
-          {loading ? "Generating..." : "Generate"}
-        </button>
-
-        <span className="text-2xl font-semibold text-slate-400">
-          {chordName}
-        </span>
-      </div>
-
+      <button
+        className="mt-4 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-60"
+        onClick={onGenerate}
+        disabled={loading || notes.activeNotes.length === 0}
+        title={notes.activeNotes.length === 0 ? "Select notes first" : ""}
+      >
+        {loading ? "Generating..." : "Generate"}
+      </button>
     </>
   );
 }

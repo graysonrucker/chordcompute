@@ -2,7 +2,7 @@ import { useMemo, useCallback } from "react";
 import Piano from "../piano/Piano";
 import FitToWidth from "../FitToWidth";
 import { computeExpandedRange } from "../../lib/pianoRange";
-import { WHITE_W } from "../../lib/pianoLayout";
+import { keyDimensions } from "../../lib/pianoLayout";
 
 const UI_CENTER = 60; // C4. Change if your UI wants a different "home".
 
@@ -39,7 +39,8 @@ export default function VoicingCard({ voicing, index }) {
   );
 
   const octaveCount = 1 + leftOctaves + rightOctaves;
-  const naturalWidth = octaveCount * 7 * WHITE_W;
+  const { whiteW, blackW, whiteH, blackH } = keyDimensions(octaveCount);
+  const naturalWidth = octaveCount * 7 * whiteW;
 
   // 3) active keys must match what the Piano is rendering, so shift the midi in isActive
   const activeSet = useMemo(() => new Set(notesArr), [notesArr]);
@@ -62,6 +63,10 @@ export default function VoicingCard({ voicing, index }) {
             toggleMidi={() => {}}
             startMidi={startMidi}
             endMidi={endMidi}
+            whiteW={whiteW}
+            blackW={blackW}
+            whiteH={whiteH}
+            blackH={blackH}
           />
         </FitToWidth>
       </div>

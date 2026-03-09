@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { WHITE_W, BLACK_W, WHITE_H, BLACK_H, pcName, isWhitePc } from "../../lib/pianoLayout";
+import { WHITE_W as DEFAULT_WHITE_W, BLACK_W as DEFAULT_BLACK_W, WHITE_H as DEFAULT_WHITE_H, BLACK_H as DEFAULT_BLACK_H, pcName, isWhitePc } from "../../lib/pianoLayout";
 import WhiteKey from "./WhiteKey";
 import BlackKey from "./BlackKey";
 
@@ -8,6 +8,10 @@ export default function Piano({
   toggleMidi,
   startMidi = 60, // C4
   endMidi = 71,   // B4
+  whiteW = DEFAULT_WHITE_W,
+  blackW = DEFAULT_BLACK_W,
+  whiteH = DEFAULT_WHITE_H,
+  blackH = DEFAULT_BLACK_H,
 }) {
   const { whites, blacks } = useMemo(() => {
     const whitesLocal = [];
@@ -30,21 +34,21 @@ export default function Piano({
         if (!whitePosByMidi.has(betweenMidi)) continue;
 
         const whiteIndex = whitePosByMidi.get(betweenMidi);
-        const leftPx = (whiteIndex + 1) * WHITE_W - BLACK_W / 2;
+        const leftPx = (whiteIndex + 1) * whiteW - blackW / 2;
 
         blacksLocal.push({ midi: m, label: pcName(m), leftPx });
       }
     }
 
     return { whites: whitesLocal, blacks: blacksLocal };
-  }, [startMidi, endMidi]);
+  }, [startMidi, endMidi, whiteW, blackW]);
 
   return (
     <div
       className="relative select-none"
       style={{
-        width: `${whites.length * WHITE_W}px`,
-        height: `${WHITE_H}px`,
+        width: `${whites.length * whiteW}px`,
+        height: `${whiteH}px`,
       }}
     >
       {/* WHITE KEYS */}
@@ -56,8 +60,8 @@ export default function Piano({
             label={k.label}
             active={isActive(k.midi)}
             onClick={() => toggleMidi(k.midi)}
-            widthPx={WHITE_W}
-            heightPx={WHITE_H}
+            widthPx={whiteW}
+            heightPx={whiteH}
           />
         ))}
       </div>
@@ -72,8 +76,8 @@ export default function Piano({
             active={isActive(bk.midi)}
             onClick={() => toggleMidi(bk.midi)}
             leftPx={bk.leftPx}
-            widthPx={BLACK_W}
-            heightPx={BLACK_H}
+            widthPx={blackW}
+            heightPx={blackH}
           />
         ))}
       </div>
