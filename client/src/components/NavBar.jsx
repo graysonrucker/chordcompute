@@ -1,9 +1,14 @@
+import { useLocation, useNavigate } from "react-router-dom";
+
 const TABS = [
-  { id: "generate", label: "Generate" },
-  { id: "info",     label: "Info" },
+  { id: "/",     label: "Generate" },
+  { id: "/info", label: "Info" },
 ];
 
-export default function NavBar({ activeTab, onTabChange, onSettingsOpen }) {
+export default function NavBar({ onSettingsOpen }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+
   return (
     <nav
       style={{
@@ -22,6 +27,7 @@ export default function NavBar({ activeTab, onTabChange, onSettingsOpen }) {
     >
       {/* Logo */}
       <span
+        onClick={() => navigate("/")}
         style={{
           fontSize: "20px",
           fontWeight: 700,
@@ -30,6 +36,7 @@ export default function NavBar({ activeTab, onTabChange, onSettingsOpen }) {
           marginRight: "8px",
           userSelect: "none",
           whiteSpace: "nowrap",
+          cursor: "pointer",
         }}
       >
         Chord
@@ -39,11 +46,11 @@ export default function NavBar({ activeTab, onTabChange, onSettingsOpen }) {
       {/* Tabs */}
       <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
         {TABS.map((tab) => {
-          const isActive = activeTab === tab.id;
+          const isActive = location.pathname === tab.id;
           return (
             <button
               key={tab.id}
-              onClick={() => onTabChange(tab.id)}
+              onClick={() => navigate(tab.id)}
               style={{
                 padding: "6px 14px",
                 borderRadius: "6px",
