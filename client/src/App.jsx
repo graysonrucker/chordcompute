@@ -10,6 +10,7 @@ import VoicingsResults from "./components/voicings/VoicingResults";
 import Pagination from "./components/Pagination";
 import { WarningBanner, ErrorBanner, HaltedBanner } from "./components/StatusBanners";
 import SettingsDrawer from "./components/SettingsDrawer";
+import ScrollToTop from "./components/ScrollToTop";
 import InfoPage from "./components/InfoPage";
 
 function fmt(n) {
@@ -114,6 +115,7 @@ function GeneratePage() {
       )}
 
       <VoicingsResults results={results} />
+      <ScrollToTop />
     </div>
   );
 }

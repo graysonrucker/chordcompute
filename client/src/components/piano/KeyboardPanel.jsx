@@ -109,6 +109,28 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
           {loading ? "Generating…" : "Generate voicings"}
         </button>
 
+        {/* Reset button */}
+        <button
+          onClick={notes.clear}
+          disabled={notes.activeNotes.length === 0}
+          className={[
+            "inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-sm font-medium",
+            "border transition-all duration-150",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400",
+            notes.activeNotes.length === 0
+              ? "border-slate-800 bg-slate-900 text-slate-600 cursor-not-allowed"
+              : "border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-slate-100 active:scale-[0.97]",
+          ].join(" ")}
+          title="Clear all selected notes"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+          Reset
+        </button>
+
         {/* Chord name display */}
         {notes.activeNotes.length >= 1 && (
           <span className="text-lg font-semibold text-slate-100 tracking-tight">
