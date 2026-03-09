@@ -38,7 +38,7 @@ export default function InfoPage() {
           Tips
         </h2>
         <ul className="mt-3 text-slate-300 leading-relaxed space-y-2" style={{ listStyleType: "disc", paddingLeft: "20px" }}>
-          <li>Use the ＋/− controls on either side of the piano to expand the range before generating.</li>
+          <li>The +/- controls on either side of the keyboard control the active range of the piano that returned voicings will fall in. The search space grows dramatically with increased range, so for best results use the smallest range tolerable</li>
           <li>Toggle between sharps (♯) and flats (♭) using the button below the keyboard.</li>
           <li>The chord name is detected automatically when three or more notes are selected.</li>
         </ul>

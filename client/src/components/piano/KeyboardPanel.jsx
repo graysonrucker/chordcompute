@@ -22,7 +22,7 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
 
   const chordName = useMemo(
     () =>
-      notes.activeNotes.length >= 2
+      notes.activeNotes.length >= 1
         ? detectChord(notes.activeNotes, preferSharps)
         : null,
     [notes.activeNotes, preferSharps]
@@ -110,7 +110,7 @@ export default function KeyboardPanel({ range, notes, loading, onGenerate }) {
         </button>
 
         {/* Chord name display */}
-        {notes.activeNotes.length >= 2 && (
+        {notes.activeNotes.length >= 1 && (
           <span className="text-lg font-semibold text-slate-100 tracking-tight">
             {chordName ?? (
               <span className="text-slate-500 font-normal text-sm">
